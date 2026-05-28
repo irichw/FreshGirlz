@@ -408,6 +408,16 @@ export default function SalonPublicScreen({ navigation, route }) {
                       <Text style={{ fontSize: 16, color: 'rgba(28,28,30,0.3)', marginTop: 4 }}>›</Text>
                     </View>
                   </View>
+                  {/* Bouton Prendre RDV */}
+                  <TouchableOpacity
+                    style={styles.rdvBtn}
+                    onPress={(e) => {
+                      e.stopPropagation?.();
+                      navigation.navigate('BookAppointment', { barberId: b.id });
+                    }}
+                    activeOpacity={0.85}>
+                    <Text style={styles.rdvBtnTxt}>📅 Prendre RDV</Text>
+                  </TouchableOpacity>
                 </BlurView>
               </TouchableOpacity>
             ))}
@@ -761,6 +771,8 @@ const styles = StyleSheet.create({
   waitBadge: { borderRadius: 20, paddingHorizontal: 9, paddingVertical: 4, borderWidth: 0.5 },
   waitText: { fontSize: 12, fontWeight: '700' },
   barberClients: { fontSize: 11, color: 'rgba(28,28,30,0.45)' },
+  rdvBtn: { marginTop: 10, backgroundColor: '#7C3D8F', borderRadius: 10, paddingVertical: 9, alignItems: 'center' },
+  rdvBtnTxt: { fontSize: 13, fontWeight: '700', color: '#fff' },
   miniQueue: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
   miniSlots: { flexDirection: 'row', gap: 4, flex: 1 },
   miniSlot: { flex: 1, height: 6, borderRadius: 3, backgroundColor: 'rgba(28,28,30,0.08)' },

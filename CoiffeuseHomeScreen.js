@@ -41,6 +41,7 @@ export default function CoiffeuseHomeScreen({ navigation }) {
   const [refreshing,    setRefreshing]    = useState(false);
   const [unreadCount,   setUnreadCount]   = useState(0);
   const [toggling,      setToggling]      = useState(false);
+  const [queueCount,    setQueueCount]    = useState(0);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
@@ -63,7 +64,7 @@ export default function CoiffeuseHomeScreen({ navigation }) {
 
       const { data: barber } = await supabase
         .from('coiffeuses')
-        .select('*, salons(id, name, address, rating, total_reviews, is_open, photo_url)')
+        .select('*, salons(id, name, address, city, rating, total_reviews, is_open, photo_url)')
         .eq('user_id', user.id)
         .single();
 
@@ -92,6 +93,7 @@ export default function CoiffeuseHomeScreen({ navigation }) {
         loadTodayAppts(barber.id),
         loadPortfolio(barber.id),
         loadUnread(user.id),
+        loadQueueCount(barber.id),
       ]);
     } finally {
       setLoading(false);
@@ -102,14 +104,24 @@ export default function CoiffeuseHomeScreen({ navigation }) {
     const today = new Date().toISOString().split('T')[0];
     const { data } = await supabase
       .from('appointments')
-      .select('id, time, service, status, client_name, duration')
-      .eq('barber_id', bid)
-      .eq('date', today)
-      .order('time', { ascending: true });
+      .select('id, time, scheduled_at, service, status, client_name, duration')
+      .eq('coiffeuse_id', bid)
+      .gte('scheduled_at', new Date(today + 'T00:00:00').toISOString())
+      .lte('scheduled_at', new Date(today + 'T23:59:59.999').toISOString())
+      .order('scheduled_at', { ascending: true });
     if (data) {
       setTodayAppts(data);
       buildSmartNotifs(data);
     }
+  }
+
+  async function loadQueueCount(bid) {
+    const { count } = await supabase
+      .from('queue')
+      .select('*', { count: 'exact', head: true })
+      .eq('barber_id', bid)
+      .in('status', ['waiting', 'in_progress']);
+    setQueueCount(count || 0);
   }
 
   async function loadPortfolio(bid) {
@@ -228,6 +240,10 @@ export default function CoiffeuseHomeScreen({ navigation }) {
     );
   }
 
+  const firstName = barberInfo?.name?.split(' ')[0] || 'Nana';
+  const location  = barberInfo?.salons?.city
+    || (barberInfo?.salons?.address ? barberInfo.salons.address.split(',').slice(-1)[0].trim() : null);
+
   return (
     <SafeAreaView style={s.safe}>
       <StatusBar barStyle="dark-content" />
@@ -238,152 +254,99 @@ export default function CoiffeuseHomeScreen({ navigation }) {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 100 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#A8852A" />}>
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#7C3D8F" />}>
 
-        {/* ════════════════════════════════════════════════
-            HEADER PREMIUM
-        ════════════════════════════════════════════════ */}
-        <BlurView intensity={55} tint="light" style={s.headerCard}>
-
-          {/* Ligne sup : notifs + date + déconnexion */}
-          <View style={s.headerTopRow}>
+        {/* ── PROFIL ── */}
+        <View style={s.profileCard}>
+          {/* Date + cloche */}
+          <View style={s.profileTopRow}>
             <Text style={s.headerDate}>{todayLabel}</Text>
-            <TouchableOpacity
-                style={s.notifBtn}
-                onPress={() => navigation.navigate('BarberNotifications')}>
-                <Image source={require('./assets/notiffull.png')} style={{ width: 20, height: 20, resizeMode: 'contain' }} />
-                {unreadCount > 0 && (
-                  <View style={s.badge}><Text style={s.badgeTxt}>{unreadCount > 9 ? '9+' : unreadCount}</Text></View>
-                )}
-              </TouchableOpacity>
+            <TouchableOpacity style={s.notifBtn} onPress={() => navigation.navigate('BarberNotifications')}>
+              <Image source={require('./assets/notiffull.png')} style={{ width: 20, height: 20, resizeMode: 'contain' }} />
+              {unreadCount > 0 && <View style={s.badge}><Text style={s.badgeTxt}>{unreadCount > 9 ? '9+' : unreadCount}</Text></View>}
+            </TouchableOpacity>
           </View>
 
-          {/* Photo + Infos */}
-          <View style={s.headerMain}>
-            <TouchableOpacity
-              onPress={() => navigation.navigate('BarberProfile', { barber: barberInfo })}
-              activeOpacity={0.85}>
-              <View style={s.shopPhoto}>
-                {barberInfo?.salons?.photo_url || barberInfo?.photo_url ? (
+          {/* Avatar + infos */}
+          <View style={s.profileMain}>
+            <TouchableOpacity onPress={() => navigation.navigate('BarberProfile', { barber: barberInfo })} activeOpacity={0.85}>
+              <View style={s.profileAvWrap}>
+                {(barberInfo?.photo_url || barberInfo?.salons?.photo_url) ? (
                   <Image
-                    source={{ uri: barberInfo?.salons?.photo_url || barberInfo?.photo_url }}
-                    style={s.shopPhotoImg}
+                    source={{ uri: barberInfo.photo_url || barberInfo.salons.photo_url }}
+                    style={s.profileAv}
                   />
                 ) : (
-                  <Text style={s.shopPhotoFallback}>
-                    {barberInfo?.name?.split(' ').map(n => n[0]).join('').slice(0, 2) || '✂'}
-                  </Text>
+                  <View style={s.profileAvFallback}>
+                    <Text style={s.profileAvText}>
+                      {barberInfo?.name?.split(' ').map(n => n[0]).join('').slice(0, 2) || '✂'}
+                    </Text>
+                  </View>
                 )}
-                {/* Pulse dot sur la photo */}
                 <Animated.View style={[s.photoPulseDot, { transform: [{ scale: salonOpen ? pulseAnim : 1 }], backgroundColor: status.color + '55' }]} />
                 <View style={[s.photoStatusDot, { backgroundColor: status.color }]} />
               </View>
             </TouchableOpacity>
 
-            <View style={s.headerInfo}>
-              <Text style={s.headerName}>{barberInfo?.name || 'Coiffeuse'}</Text>
-              <Text style={s.headerSalon}>{barberInfo?.salons?.name || 'Salon'}</Text>
-
-              {/* Note */}
-              <View style={s.ratingRow}>
-                {[1,2,3,4,5].map(i => (
-                  <Text key={i} style={[s.ratingStar, {
-                    color: i <= Math.round(barberInfo?.rating || 0) ? '#A8852A' : 'rgba(28,28,30,0.2)'
-                  }]}>★</Text>
-                ))}
-                <Text style={s.ratingVal}>
-                  {barberInfo?.rating?.toFixed(1) || '—'} · {barberInfo?.total_reviews || 0} avis
-                </Text>
+            <View style={s.profileInfo}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+                <Text style={s.profileName}>{barberInfo?.name || 'Coiffeuse'}</Text>
+                <View style={s.verifiedBadge}>
+                  <Text style={s.verifiedCheck}>✓</Text>
+                </View>
               </View>
-
-              {/* Badge statut */}
-              <View style={[s.statusBadge, { backgroundColor: status.bg }]}>
-                <Text style={s.statusEmoji}>{status.emoji}</Text>
-                <Text style={[s.statusLabel, { color: status.color }]}>{status.label}</Text>
+              <Text style={s.profileRole}>Coiffeuse professionnelle</Text>
+              {location ? (
+                <Text style={s.profileLocation}>📍 {location}</Text>
+              ) : null}
+              <View style={s.ratingChip}>
+                <Text style={s.ratingChipText}>
+                  ⭐ {(barberInfo?.rating || 0).toFixed(1)} ({barberInfo?.total_reviews || 0} avis)
+                </Text>
               </View>
             </View>
           </View>
+        </View>
 
-          {/* Toggle "Accepter les clients" */}
-          <TouchableOpacity
-            style={[s.acceptToggle, salonOpen && s.acceptToggleOn]}
-            onPress={handleToggleOpen}
-            activeOpacity={0.85}>
-            <View style={s.acceptLeft}>
-              <Text style={s.acceptIcon}>{salonOpen ? '✓' : '+'}</Text>
-              <View>
-                <Text style={[s.acceptTitle, salonOpen && s.acceptTitleOn]}>
-                  {salonOpen ? "Vous acceptez des RDV" : "Accepter des rendez-vous"}
-                </Text>
-                <Text style={[s.acceptSub, salonOpen && { color: 'rgba(255,255,255,0.7)' }]}>
-                  {salonOpen
-                    ? `${confirmedCnt} RDV confirmé(s) aujourd'hui`
-                    : "Appuie pour activer ta disponibilité"}
-                </Text>
-              </View>
-            </View>
-            <View style={[s.toggleTrack, salonOpen && s.toggleTrackOn]}>
-              <View style={[s.toggleThumb, salonOpen && s.toggleThumbOn]} />
-            </View>
+        {/* ── BIENVENUE ── */}
+        <View style={s.welcomeBanner}>
+          <Text style={s.welcomeTitle}>Bienvenue {firstName} !</Text>
+          <Text style={s.welcomeSub}>Voici un aperçu de ton activité aujourd'hui.</Text>
+        </View>
+
+        {/* ── AUJOURD'HUI ── */}
+        <View style={s.secRow}>
+          <Text style={s.secTitle}>Aujourd'hui</Text>
+          <TouchableOpacity onPress={() => navigation.navigate('Agenda')}>
+            <Text style={s.secLink}>Voir le planning ›</Text>
           </TouchableOpacity>
+        </View>
 
-        </BlurView>
-
-        {/* ════════════════════════════════════════════════
-            KPIs RAPIDES
-        ════════════════════════════════════════════════ */}
-        <View style={s.kpiRow}>
+        <View style={s.statsRow}>
           {[
-            { num: confirmedCnt,                                    lbl: 'RDV auj.',  sub: 'confirmés', color: '#7C3D8F' },
-            { num: pendingCnt,                                      lbl: 'En attente',sub: 'à confirmer',color: '#B06A00' },
-            { num: portfolio.reduce((s, c) => s + (c.likes||0), 0),lbl: 'Likes',     sub: 'total',     color: '#e74c3c' },
-          ].map(k => (
-            <BlurView key={k.lbl} intensity={60} tint="light" style={s.kpiCard}>
-              <Text style={[s.kpiNum, { color: k.color }]}>{k.num}</Text>
-              <Text style={s.kpiLbl}>{k.lbl}</Text>
-              <Text style={s.kpiSub}>{k.sub}</Text>
+            { num: todayAppts.length, lbl: 'RDV du jour' },
+            { num: pendingCnt,        lbl: 'À confirmer'  },
+            { num: queueCount,        lbl: 'En attente'   },
+          ].map(stat => (
+            <BlurView key={stat.lbl} intensity={60} tint="light" style={s.statCard}>
+              <Text style={s.statNum}>{stat.num}</Text>
+              <Text style={s.statLbl}>{stat.lbl}</Text>
             </BlurView>
           ))}
         </View>
 
-        {/* ════════════════════════════════════════════════
-            NOTIFICATIONS INTELLIGENTES
-        ════════════════════════════════════════════════ */}
-        {smartNotifs.length > 0 && (
-          <>
-            <View style={s.secRow}>
-              <Text style={s.secTitle}>🔔 Alertes intelligentes</Text>
-            </View>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingHorizontal: 16, gap: 8, paddingBottom: 4 }}>
-              {smartNotifs.map(n => (
-                <BlurView key={n.id} intensity={60} tint="light" style={s.notifChip}>
-                  <Text style={{ fontSize: 16 }}>{n.emoji}</Text>
-                  <Text style={[s.notifChipTxt, { color: n.color }]}>{n.text}</Text>
-                </BlurView>
-              ))}
-            </ScrollView>
-          </>
-        )}
-
-        {/* ════════════════════════════════════════════════
-            RDV DU JOUR
-        ════════════════════════════════════════════════ */}
-        <View style={s.secRow}>
-          <Text style={s.secTitle}>📅 Rendez-vous du jour</Text>
-          <TouchableOpacity onPress={() => navigation.navigate('Agenda')}>
-            <Text style={s.secLink}>Tout voir →</Text>
-          </TouchableOpacity>
-        </View>
-
+        {/* ── ALERTE EN ATTENTE ── */}
         {pendingCnt > 0 && (
           <TouchableOpacity style={s.pendingAlert} onPress={() => navigation.navigate('Agenda')} activeOpacity={0.8}>
             <Text style={s.pendingTxt}>⏳ {pendingCnt} RDV en attente de confirmation</Text>
             <Text style={s.pendingLink}>Confirmer →</Text>
           </TouchableOpacity>
         )}
+
+        {/* ── RDV DU JOUR ── */}
+        <View style={s.secRow}>
+          <Text style={s.secTitle}>📅 Rendez-vous du jour</Text>
+        </View>
 
         {todayAppts.length === 0 ? (
           <BlurView intensity={50} tint="light" style={s.emptyCard}>
@@ -400,7 +363,11 @@ export default function CoiffeuseHomeScreen({ navigation }) {
               const st = APPT_STATUS[a.status] || { label: a.status, color: 'rgba(28,28,30,0.4)' };
               return (
                 <BlurView key={a.id} intensity={65} tint="light" style={s.apptCard}>
-                  <Text style={s.apptTime}>{a.time?.slice(0, 5) || '--:--'}</Text>
+                  <Text style={s.apptTime}>
+                    {a.time?.slice(0, 5) || (a.scheduled_at
+                      ? new Date(a.scheduled_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+                      : '--:--')}
+                  </Text>
                   <View style={s.apptAv}>
                     <Text style={s.apptAvTxt}>{(a.client_name || 'C')[0].toUpperCase()}</Text>
                   </View>
@@ -413,20 +380,15 @@ export default function CoiffeuseHomeScreen({ navigation }) {
               );
             })}
             <TouchableOpacity style={s.addApptCard}
-              onPress={() => navigation.navigate('BookAppointment', { barber: barberInfo })}>
+              onPress={() => navigation.navigate('BookAppointment', { barberId: barberInfo?.id, isBarber: true })}>
               <Text style={s.addApptPlus}>＋</Text>
               <Text style={s.addApptTxt}>Nouveau{'\n'}RDV</Text>
             </TouchableOpacity>
           </ScrollView>
         )}
 
-
-
       </ScrollView>
 
-      {/* ════════════════════════════════════════════════
-          TAB BAR
-      ════════════════════════════════════════════════ */}
       <CoiffeuseTabBar active="BarberHome" navigation={navigation} />
     </SafeAreaView>
   );
@@ -440,52 +402,41 @@ const s = StyleSheet.create({
   blob2:     { position: 'absolute', top: 400,    left: -70,  width: 280, height: 280, borderRadius: 140, backgroundColor: 'rgba(124,61,143,0.13)'  },
   blob3:     { position: 'absolute', bottom: 100, right: -40, width: 240, height: 240, borderRadius: 120, backgroundColor: 'rgba(60,160,255,0.11)' },
 
-  // ── Header premium ──
-  headerCard:    { marginHorizontal: 16, marginTop: 12, marginBottom: 10, borderRadius: 24, overflow: 'hidden', padding: 16, borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.9)' },
-  headerTopRow:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
-  headerDate:    { fontSize: 12, color: 'rgba(28,28,30,0.5)', textTransform: 'capitalize', flex: 1 },
-  notifBtn:      { width: 38, height: 38, borderRadius: 12, backgroundColor: 'rgba(168,133,42,0.1)', borderWidth: 1, borderColor: 'rgba(168,133,42,0.25)', alignItems: 'center', justifyContent: 'center' },
-  logoutBtn:     { width: 38, height: 38, borderRadius: 12, backgroundColor: 'rgba(192,57,43,0.1)', borderWidth: 1, borderColor: 'rgba(192,57,43,0.25)', alignItems: 'center', justifyContent: 'center' },
-  logoutInitials:{ fontSize: 13, fontWeight: '800', color: '#C0392B' },
-  badge:         { position: 'absolute', top: -4, right: -4, width: 16, height: 16, borderRadius: 8, backgroundColor: '#C0392B', alignItems: 'center', justifyContent: 'center' },
-  badgeTxt:      { color: '#fff', fontSize: 9, fontWeight: '800' },
-  headerMain:    { flexDirection: 'row', gap: 14, alignItems: 'flex-start', marginBottom: 14 },
-  shopPhoto:     { width: 78, height: 78, borderRadius: 22, backgroundColor: 'rgba(168,133,42,0.15)', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'rgba(168,133,42,0.35)', overflow: 'visible', flexShrink: 0 },
-  shopPhotoImg:  { width: 78, height: 78, borderRadius: 22 },
-  shopPhotoFallback: { fontSize: 28, fontWeight: '800', color: '#A8852A' },
-  photoPulseDot: { position: 'absolute', bottom: -3, right: -3, width: 18, height: 18, borderRadius: 9 },
-  photoStatusDot:{ position: 'absolute', bottom: 1, right: 1, width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: '#fff' },
-  headerInfo:    { flex: 1, gap: 3 },
-  headerName:    { fontSize: 20, fontWeight: '800', color: '#1C1C1E', letterSpacing: -0.5 },
-  headerSalon:   { fontSize: 12, color: 'rgba(28,28,30,0.55)' },
-  ratingRow:     { flexDirection: 'row', alignItems: 'center', gap: 1, marginTop: 2 },
-  ratingStar:    { fontSize: 13 },
-  ratingVal:     { fontSize: 11, color: 'rgba(28,28,30,0.55)', marginLeft: 5 },
-  statusBadge:   { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 10, paddingHorizontal: 9, paddingVertical: 4, alignSelf: 'flex-start', marginTop: 4 },
-  statusEmoji:   { fontSize: 11 },
-  statusLabel:   { fontSize: 11, fontWeight: '700' },
+  // ── Profil ──
+  profileCard:    { marginHorizontal: 16, marginTop: 12, marginBottom: 12, borderRadius: 24, backgroundColor: '#fff', padding: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 12, elevation: 3 },
+  profileTopRow:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  headerDate:     { fontSize: 12, color: 'rgba(28,28,30,0.5)', textTransform: 'capitalize', flex: 1 },
+  notifBtn:       { width: 38, height: 38, borderRadius: 12, backgroundColor: 'rgba(124,61,143,0.08)', borderWidth: 1, borderColor: 'rgba(124,61,143,0.18)', alignItems: 'center', justifyContent: 'center' },
+  badge:          { position: 'absolute', top: -4, right: -4, width: 16, height: 16, borderRadius: 8, backgroundColor: '#C0392B', alignItems: 'center', justifyContent: 'center' },
+  badgeTxt:       { color: '#fff', fontSize: 9, fontWeight: '800' },
+  profileMain:    { flexDirection: 'row', gap: 14, alignItems: 'flex-start' },
+  profileAvWrap:  { width: 76, height: 76, borderRadius: 38, overflow: 'visible', flexShrink: 0 },
+  profileAv:      { width: 76, height: 76, borderRadius: 38 },
+  profileAvFallback: { width: 76, height: 76, borderRadius: 38, backgroundColor: 'rgba(124,61,143,0.12)', alignItems: 'center', justifyContent: 'center' },
+  profileAvText:  { fontSize: 26, fontWeight: '800', color: '#7C3D8F' },
+  photoPulseDot:  { position: 'absolute', bottom: -2, right: -2, width: 18, height: 18, borderRadius: 9 },
+  photoStatusDot: { position: 'absolute', bottom: 2, right: 2, width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: '#fff' },
+  profileInfo:    { flex: 1, gap: 3, paddingTop: 2 },
+  profileName:    { fontSize: 18, fontWeight: '800', color: '#1C1C1E', letterSpacing: -0.3 },
+  profileRole:    { fontSize: 12, color: 'rgba(28,28,30,0.5)' },
+  profileLocation:{ fontSize: 12, color: 'rgba(28,28,30,0.5)' },
+  verifiedBadge:  { width: 18, height: 18, borderRadius: 9, backgroundColor: '#0071E3', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  verifiedCheck:  { fontSize: 10, color: '#fff', fontWeight: '800' },
+  ratingChip:     { alignSelf: 'flex-start', backgroundColor: 'rgba(212,168,67,0.12)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4, marginTop: 2, borderWidth: 0.5, borderColor: 'rgba(212,168,67,0.4)' },
+  ratingChipText: { fontSize: 12, fontWeight: '700', color: '#A8852A' },
 
-  // ── Toggle accepter clients ──
-  acceptToggle:  { borderRadius: 16, padding: 13, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(28,28,30,0.06)', borderWidth: 1, borderColor: 'rgba(28,28,30,0.1)' },
-  acceptToggleOn:{ backgroundColor: 'rgba(124,61,143,0.88)', borderColor: 'rgba(124,61,143,0.9)' },
-  acceptLeft:    { flex: 1, flexDirection: 'row', gap: 10, alignItems: 'center' },
-  acceptIcon:    { width: 34, height: 34, borderRadius: 11, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center', fontSize: 16, textAlign: 'center', lineHeight: 34 },
-  acceptTitle:   { fontSize: 14, fontWeight: '800', color: '#1C1C1E' },
-  acceptTitleOn: { color: '#fff' },
-  acceptSub:     { fontSize: 11, color: 'rgba(28,28,30,0.5)', marginTop: 2 },
-  toggleTrack:   { width: 46, height: 26, borderRadius: 13, backgroundColor: 'rgba(28,28,30,0.2)', position: 'relative', flexShrink: 0 },
-  toggleTrackOn: { backgroundColor: 'rgba(255,255,255,0.3)' },
-  toggleThumb:   { width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff', position: 'absolute', top: 2, left: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.2, shadowRadius: 3, elevation: 2 },
-  toggleThumbOn: { left: 22 },
+  // ── Bannière bienvenue ──
+  welcomeBanner: { marginHorizontal: 16, marginBottom: 6, borderRadius: 20, backgroundColor: '#7C3D8F', padding: 18 },
+  welcomeTitle:  { fontSize: 20, fontWeight: '800', color: '#fff', marginBottom: 4 },
+  welcomeSub:    { fontSize: 13, color: 'rgba(255,255,255,0.78)', lineHeight: 18 },
 
-  // ── KPIs ──
-  kpiRow:  { paddingHorizontal: 16, flexDirection: 'row', gap: 7, marginBottom: 10 },
-  kpiCard: { flex: 1, borderRadius: 14, overflow: 'hidden', padding: 11, alignItems: 'center', borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.85)' },
-  kpiNum:  { fontSize: 19, fontWeight: '800' },
-  kpiLbl:  { fontSize: 10, fontWeight: '600', color: '#1C1C1E', marginTop: 3, textAlign: 'center' },
-  kpiSub:  { fontSize: 9, color: 'rgba(28,28,30,0.45)', marginTop: 1, textAlign: 'center' },
+  // ── Stats Aujourd'hui ──
+  statsRow: { paddingHorizontal: 16, flexDirection: 'row', gap: 8, marginBottom: 10 },
+  statCard: { flex: 1, borderRadius: 16, overflow: 'hidden', paddingVertical: 14, alignItems: 'center', borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.9)' },
+  statNum:  { fontSize: 26, fontWeight: '800', color: '#1C1C1E', letterSpacing: -1 },
+  statLbl:  { fontSize: 10, fontWeight: '600', color: 'rgba(28,28,30,0.5)', marginTop: 4, textAlign: 'center' },
 
-  // ── Notif chips ──
+  // ── Notif chips (conservés pour compatibilité) ──
   notifChip:    { flexDirection: 'row', alignItems: 'center', gap: 7, borderRadius: 14, overflow: 'hidden', paddingHorizontal: 13, paddingVertical: 10, borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.85)', maxWidth: 260 },
   notifChipTxt: { fontSize: 12, fontWeight: '600', lineHeight: 17, flex: 1, flexShrink: 1 },
 

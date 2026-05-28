@@ -6,43 +6,6 @@ import { BlurView } from 'expo-blur';
 import { supabase } from './supabase';
 import { isWithinHours, todayDow } from './utils/hours';
 
-// Génère les 14 prochains jours pour le calendrier
-function buildDays(n = 14) {
-  const days = [];
-  const LABELS = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
-  const MONTHS = ['jan','fév','mar','avr','mai','jun','jul','aoû','sep','oct','nov','déc'];
-  for (let i = 0; i < n; i++) {
-    const d = new Date();
-    d.setDate(d.getDate() + i);
-    days.push({
-      key: d.toISOString().split('T')[0],
-      dayLabel: LABELS[d.getDay()],
-      dayNum: d.getDate(),
-      monthLabel: MONTHS[d.getMonth()],
-    });
-  }
-  return days;
-}
-
-const DAYS = buildDays(14);
-
-// Génère les créneaux horaires entre openTime et closeTime, espacés de stepMin
-function buildTimeSlots(openTime = '09:00', closeTime = '18:00', stepMin = 30) {
-  const slots = [];
-  const [oh, om] = openTime.split(':').map(Number);
-  const [ch, cm] = closeTime.split(':').map(Number);
-  let cur = oh * 60 + om;
-  const end = ch * 60 + cm;
-  while (cur < end) {
-    const h = String(Math.floor(cur / 60)).padStart(2, '0');
-    const m = String(cur % 60).padStart(2, '0');
-    slots.push(`${h}:${m}`);
-    cur += stepMin;
-  }
-  return slots;
-}
-
-const DEFAULT_SLOTS = buildTimeSlots('09:00', '18:00', 30);
 
 // Formate une durée en minutes → "30 min", "1h", "1h30"
 function fmtDuration(minutes) {
@@ -97,10 +60,6 @@ const [isFollowing, setIsFollowing] = useState(false);
   const [reviews, setReviews] = useState([]);
   const [salonServices, setSalonServices] = useState([]);
   const [salonHours, setSalonHours] = useState([]);
-  const [rdvDate, setRdvDate] = useState(DAYS[0]?.key || '');
-  const [rdvTime, setRdvTime] = useState('09:00');
-  const [rdvService, setRdvService] = useState(null);
-  const [rdvBooking, setRdvBooking] = useState(false);
 
 useEffect(() => {
   if (barber.id) {
@@ -330,58 +289,8 @@ async function loadSalonStatus() {
       supabase.from('opening_hours').select('day_of_week, open_time, close_time, is_closed')
         .eq('salon_id', salonId),
     ]);
-    if (svcRes.data?.length) { setSalonServices(svcRes.data); setRdvService(svcRes.data[0]); }
+    if (svcRes.data?.length) setSalonServices(svcRes.data);
     if (hoursRes.data) setSalonHours(hoursRes.data);
-  }
-
-  // Retourne les créneaux du jour sélectionné
-  // Domicile : toujours créneaux par défaut (9h-18h), coiffeuse confirmera
-  // Salon : basé sur opening_hours du salon
-  function getSlotsForDate(dateKey) {
-    if (!dateKey) return DEFAULT_SLOTS;
-    if (barberData.work_mode === 'domicile') {
-      const step = rdvService?.duration_minutes || 30;
-      return buildTimeSlots('09:00', '18:00', step);
-    }
-    const dow = new Date(dateKey + 'T12:00:00').getDay();
-    const h = salonHours.find(r => r.day_of_week === dow);
-    if (!h || h.is_closed) return [];
-    const step = rdvService?.duration_minutes || 30;
-    return buildTimeSlots(h.open_time, h.close_time, step);
-  }
-
-  async function handleBookRdv() {
-    if (!rdvService || !rdvDate || !rdvTime) return;
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) { navigation.navigate('Auth'); return; }
-    const { data: client } = await supabase
-      .from('clientes').select('id, name').eq('user_id', session.user.id).maybeSingle();
-    if (!client) return;
-    setRdvBooking(true);
-    try {
-      const { error } = await supabase.from('appointments').insert({
-        barber_id: barberData.id,
-        client_id: client.id,
-        salon_id: barberData.salon_id,
-        service_id: rdvService.id,
-        service_name: rdvService.name,
-        date: rdvDate,
-        time: rdvTime,
-        status: 'pending',
-        client_name: client.name,
-        duration_minutes: rdvService.duration_minutes,
-        price: rdvService.price,
-      });
-      if (error) throw error;
-      Alert.alert(
-        'Rendez-vous confirmé ✓',
-        `${rdvService.name}\n${new Date(rdvDate + 'T12:00:00').toLocaleDateString('fr-FR', { weekday:'long', day:'numeric', month:'long' })} à ${rdvTime}`,
-      );
-    } catch (e) {
-      Alert.alert('Erreur', e.message);
-    } finally {
-      setRdvBooking(false);
-    }
   }
   return (
     <SafeAreaView style={styles.safe}>
@@ -538,14 +447,14 @@ async function loadSalonStatus() {
         {/* CTA — Prendre rendez-vous */}
         <TouchableOpacity
           style={styles.reserveBtn}
-          onPress={() => setActiveTab('RDV')}
+          onPress={() => navigation.navigate('BookAppointment', { barberId: barberData.id })}
           activeOpacity={0.8}>
           <Text style={styles.reserveBtnText}>📅 Prendre rendez-vous</Text>
         </TouchableOpacity>
 
         {/* TABS */}
         <BlurView intensity={40} tint="light" style={styles.tabs}>
-          {['Book','Prestations','RDV','Avis'].map((t) => (
+          {['Book','Prestations','Avis'].map((t) => (
             <TouchableOpacity key={t} style={styles.tab}
               onPress={() => setActiveTab(t)}>
               <Text style={[styles.tabText, activeTab===t && styles.tabActive]}>{t}</Text>
@@ -668,141 +577,6 @@ async function loadSalonStatus() {
           </View>
         )}
 
-        {/* ── ONGLET RDV ── */}
-        {activeTab === 'RDV' && (
-          <View>
-            <View style={styles.secRow}>
-              <Text style={styles.secTitle}>📅 Prendre rendez-vous</Text>
-            </View>
-
-            {/* Note domicile */}
-            {barberData.work_mode === 'domicile' && (
-              <BlurView intensity={55} tint="light" style={styles.domicileNote}>
-                <Text style={styles.domicileNoteText}>
-                  🏠 La coiffeuse se déplace chez vous. Elle confirmera votre créneau et les modalités par message.
-                </Text>
-              </BlurView>
-            )}
-
-            {/* Sélection prestation */}
-            <View style={{ paddingHorizontal: 16, marginBottom: 12 }}>
-              <Text style={styles.rdvLabel}>Prestation</Text>
-              {salonServices.length === 0 ? (
-                <BlurView intensity={55} tint="light" style={[styles.timerCard, { padding: 14, alignItems: 'flex-start' }]}>
-                  <Text style={{ fontSize: 13, color: 'rgba(28,28,30,0.4)' }}>Aucune prestation disponible</Text>
-                </BlurView>
-              ) : (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 6 }}>
-                  <View style={{ flexDirection: 'row', gap: 8 }}>
-                    {salonServices.map(svc => (
-                      <TouchableOpacity
-                        key={svc.id}
-                        onPress={() => setRdvService(svc)}
-                        style={[styles.rdvSvcChip, rdvService?.id === svc.id && styles.rdvSvcChipActive]}>
-                        <Text style={[styles.rdvSvcChipText, rdvService?.id === svc.id && { color: '#fff' }]}>
-                          {svc.name}
-                        </Text>
-                        <Text style={[styles.rdvSvcChipSub, rdvService?.id === svc.id && { color: 'rgba(255,255,255,0.75)' }]}>
-                          {fmtPrice(svc)} · {fmtDuration(svc.duration_minutes)}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </ScrollView>
-              )}
-            </View>
-
-            {/* Calendrier */}
-            <View style={{ paddingHorizontal: 16, marginBottom: 12 }}>
-              <Text style={styles.rdvLabel}>Choisir une date</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 6 }}>
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                  {DAYS.map(day => (
-                    <TouchableOpacity
-                      key={day.key}
-                      onPress={() => setRdvDate(day.key)}
-                      style={[styles.rdvDayChip, rdvDate === day.key && styles.rdvDayChipActive]}>
-                      <Text style={[styles.rdvDayLabel, rdvDate === day.key && { color: 'rgba(255,255,255,0.75)' }]}>
-                        {day.dayLabel}
-                      </Text>
-                      <Text style={[styles.rdvDayNum, rdvDate === day.key && { color: '#fff' }]}>
-                        {day.dayNum}
-                      </Text>
-                      <Text style={[styles.rdvDayMonth, rdvDate === day.key && { color: 'rgba(255,255,255,0.7)' }]}>
-                        {day.monthLabel}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </ScrollView>
-            </View>
-
-            {/* Créneaux horaires */}
-            <View style={{ paddingHorizontal: 16, marginBottom: 12 }}>
-              <Text style={styles.rdvLabel}>Choisir un créneau</Text>
-              {(() => {
-                const slots = getSlotsForDate(rdvDate);
-                if (slots.length === 0) return (
-                  <BlurView intensity={55} tint="light" style={[styles.rdvEmptyCard, { marginTop: 6 }]}>
-                    <Text style={{ fontSize: 13, color: '#C0392B' }}>Fermé ce jour-là</Text>
-                  </BlurView>
-                );
-                return (
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-                    {slots.map(slot => (
-                      <TouchableOpacity
-                        key={slot}
-                        onPress={() => setRdvTime(slot)}
-                        style={[styles.rdvTimeChip, rdvTime === slot && styles.rdvTimeChipActive]}>
-                        <Text style={[styles.rdvTimeChipText, rdvTime === slot && { color: '#fff' }]}>
-                          {slot}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                );
-              })()}
-            </View>
-
-            {/* Récapitulatif + bouton */}
-            {rdvService && rdvDate && rdvTime && (
-              <BlurView intensity={60} tint="light" style={styles.rdvSummary}>
-                <Text style={styles.rdvSummaryTitle}>Récapitulatif</Text>
-                <View style={styles.rdvSummaryRow}>
-                  <Text style={styles.rdvSummaryLabel}>Prestation</Text>
-                  <Text style={styles.rdvSummaryValue}>{rdvService.name}</Text>
-                </View>
-                <View style={styles.rdvSummaryRow}>
-                  <Text style={styles.rdvSummaryLabel}>Durée</Text>
-                  <Text style={styles.rdvSummaryValue}>{fmtDuration(rdvService.duration_minutes)}</Text>
-                </View>
-                <View style={styles.rdvSummaryRow}>
-                  <Text style={styles.rdvSummaryLabel}>Prix</Text>
-                  <Text style={styles.rdvSummaryValue}>{fmtPrice(rdvService)}</Text>
-                </View>
-                <View style={styles.rdvSummaryRow}>
-                  <Text style={styles.rdvSummaryLabel}>Date</Text>
-                  <Text style={styles.rdvSummaryValue}>
-                    {new Date(rdvDate + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}
-                  </Text>
-                </View>
-                <View style={[styles.rdvSummaryRow, { borderBottomWidth: 0 }]}>
-                  <Text style={styles.rdvSummaryLabel}>Heure</Text>
-                  <Text style={styles.rdvSummaryValue}>{rdvTime}</Text>
-                </View>
-                <TouchableOpacity
-                  style={[styles.rdvBookBtn, rdvBooking && { opacity: 0.6 }]}
-                  onPress={handleBookRdv}
-                  disabled={rdvBooking}
-                  activeOpacity={0.8}>
-                  <Text style={styles.rdvBookBtnText}>
-                    {rdvBooking ? 'Envoi en cours...' : '✓ Confirmer le rendez-vous'}
-                  </Text>
-                </TouchableOpacity>
-              </BlurView>
-            )}
-          </View>
-        )}
 
         {/* ── ONGLET AVIS ── */}
         {activeTab === 'Avis' && (

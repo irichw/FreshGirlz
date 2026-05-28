@@ -79,31 +79,55 @@ export default function CoiffeuseNotificationsScreen({ navigation }) {
           keyExtractor={item => item.id}
           contentContainerStyle={{ padding: 16, gap: 8, paddingBottom: 40 }}
           showsVerticalScrollIndicator={false}
-          renderItem={({ item }) => (
-            <BlurView intensity={60} tint="light" style={[styles.notifCard, !item.read && styles.notifCardUnread]}>
-              {!item.read && <View style={styles.unreadDot} />}
-              <View style={styles.notifTop}>
-                <View style={[styles.notifIcon, item.type === 'new_review' && styles.notifIconGold]}>
-                  {item.type === 'new_review'
-                    ? <Text style={styles.notifIconText}>★</Text>
-                    : <Image source={require('./assets/notiffull.png')} style={{ width: 20, height: 20, resizeMode: 'contain' }} />
-                  }
+          renderItem={({ item }) => {
+            const parsedData = (() => {
+              try { return typeof item.data === 'string' ? JSON.parse(item.data) : (item.data || {}); }
+              catch { return {}; }
+            })();
+            const isRdv    = item.type === 'new_appointment';
+            const isReview = item.type === 'new_review';
+            return (
+              <BlurView intensity={60} tint="light" style={[styles.notifCard, !item.read && styles.notifCardUnread]}>
+                {!item.read && <View style={styles.unreadDot} />}
+                <View style={styles.notifTop}>
+                  <View style={[styles.notifIcon,
+                    isReview && styles.notifIconGold,
+                    isRdv    && styles.notifIconPurple,
+                  ]}>
+                    {isReview
+                      ? <Text style={styles.notifIconText}>★</Text>
+                      : isRdv
+                        ? <Text style={styles.notifIconText}>📅</Text>
+                        : <Image source={require('./assets/notiffull.png')} style={{ width: 20, height: 20, resizeMode: 'contain' }} />
+                    }
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.notifTitle}>{item.title}</Text>
+                    <Text style={styles.notifBody}>{item.body}</Text>
+                    <Text style={styles.notifTime}>{timeAgo(item.created_at)}</Text>
+                  </View>
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.notifTitle}>{item.title}</Text>
-                  <Text style={styles.notifBody}>{item.body}</Text>
-                  <Text style={styles.notifTime}>{timeAgo(item.created_at)}</Text>
-                </View>
-              </View>
-              {item.type === 'new_review' && (
-                <TouchableOpacity
-                  style={styles.voirBtn}
-                  onPress={() => setSelectedReview(item)}>
-                  <Text style={styles.voirBtnText}>Voir l'avis →</Text>
-                </TouchableOpacity>
-              )}
-            </BlurView>
-          )}
+                {isReview && (
+                  <TouchableOpacity
+                    style={styles.voirBtn}
+                    onPress={() => setSelectedReview(item)}>
+                    <Text style={styles.voirBtnText}>Voir l'avis →</Text>
+                  </TouchableOpacity>
+                )}
+                {isRdv && (
+                  <TouchableOpacity
+                    style={styles.voirRdvBtn}
+                    onPress={() => {
+                      navigation.navigate('Agenda', {
+                        initialAppointmentId: parsedData.appointment_id,
+                      });
+                    }}>
+                    <Text style={styles.voirRdvBtnText}>Voir la demande · Confirmer →</Text>
+                  </TouchableOpacity>
+                )}
+              </BlurView>
+            );
+          }}
         />
       )}
 
@@ -184,15 +208,18 @@ const styles = StyleSheet.create({
   unreadDot: { position: 'absolute', top: 12, right: 12, width: 8, height: 8, borderRadius: 4, backgroundColor: '#7C3D8F' },
 
   notifTop: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
-  notifIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(28,28,30,0.08)', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  notifIconGold: { backgroundColor: 'rgba(168,133,42,0.15)' },
+  notifIcon:       { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(28,28,30,0.08)', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  notifIconGold:   { backgroundColor: 'rgba(168,133,42,0.15)' },
+  notifIconPurple: { backgroundColor: 'rgba(124,61,143,0.15)' },
   notifIconText: { fontSize: 18 },
   notifTitle: { fontSize: 14, fontWeight: '700', color: '#1C1C1E', marginBottom: 2 },
   notifBody: { fontSize: 12, color: 'rgba(28,28,30,0.55)', lineHeight: 17 },
   notifTime: { fontSize: 10, color: 'rgba(28,28,30,0.35)', marginTop: 4 },
 
-  voirBtn: { marginTop: 10, backgroundColor: 'rgba(168,133,42,0.12)', borderRadius: 10, padding: 10, alignItems: 'center', borderWidth: 0.5, borderColor: 'rgba(168,133,42,0.3)' },
-  voirBtnText: { fontSize: 13, fontWeight: '700', color: '#A8852A' },
+  voirBtn:       { marginTop: 10, backgroundColor: 'rgba(168,133,42,0.12)', borderRadius: 10, padding: 10, alignItems: 'center', borderWidth: 0.5, borderColor: 'rgba(168,133,42,0.3)' },
+  voirBtnText:   { fontSize: 13, fontWeight: '700', color: '#A8852A' },
+  voirRdvBtn:    { marginTop: 10, backgroundColor: 'rgba(124,61,143,0.12)', borderRadius: 10, padding: 10, alignItems: 'center', borderWidth: 0.5, borderColor: 'rgba(124,61,143,0.3)' },
+  voirRdvBtnText:{ fontSize: 13, fontWeight: '700', color: '#7C3D8F' },
 
   modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.35)' },
   modalSheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden', paddingBottom: 40 },

@@ -86,6 +86,7 @@ useEffect(() => {
   const [likedCoupes, setLikedCoupes] = useState([]);
   const [inspirationCoupes, setInspirationCoupes] = useState([]);
   const [followedClients, setFollowedClients] = useState([]);
+  const [myAppointments, setMyAppointments] = useState([]);
 
   async function loadAll() {
   try {
@@ -230,8 +231,18 @@ if (coupes) {
     ...c,
     photo_url: c.photo_url ? `${c.photo_url.split('?')[0]}?t=${Date.now()}` : null
   }));
-  setAllCoupes(coupesWithCache); // ← à l'intérieur du if
-}}
+  setAllCoupes(coupesWithCache);
+}
+
+      // 9. Mes rendez-vous (à venir + récents)
+      const { data: appts } = await supabase
+        .from('appointments')
+        .select('id, scheduled_at, time, service, status, client_name, duration, notes, coiffeuse_id, coiffeuses(name, salons(name))')
+        .eq('cliente_id', client.id)
+        .order('scheduled_at', { ascending: false })
+        .limit(20);
+      setMyAppointments(appts || []);
+}
 
     // Moyenne plateforme
     const { data: avgData } = await supabase
@@ -720,37 +731,102 @@ setClientData(prev => ({ ...prev, avatar_url: avatarUrl }));
         )}
         </>)}
 
-            {/* PROCHAINS RDV — désactivé V1, réactiver en V2 */}
-            {false && (<>
+            {/* MES RENDEZ-VOUS */}
             <View style={styles.secRow}>
-              <Text style={styles.secTitle}>📅 Prochains rendez-vous</Text>
+              <Text style={styles.secTitle}>📅 Mes rendez-vous</Text>
+              {myAppointments.length > 0 && (
+                <Text style={styles.secLink}>{myAppointments.length}</Text>
+              )}
             </View>
-            <BlurView intensity={60} tint="light" style={styles.card}>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoL}>Date</Text>
-                <Text style={styles.infoV}>Mer. 28 jan · 14h30</Text>
-              </View>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoL}>Prestation</Text>
-                <Text style={styles.infoV}>Mid Fade + Design</Text>
-              </View>
-              <View style={[styles.infoRow, { borderBottomWidth: 0, marginBottom: 10 }]}>
-                <Text style={styles.infoL}>Coiffeuse</Text>
-                <Text style={styles.infoV}>Kevin J.</Text>
-              </View>
-              <View style={{ flexDirection: 'row', gap: 6 }}>
-                <TouchableOpacity style={styles.rdvBtnRed}>
-                  <Text style={styles.rdvBtnRedText}>Annuler</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.rdvBtnBlue}>
-                  <Text style={styles.rdvBtnBlueText}>Reporter</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.rdvBtnBlue}>
-                  <Text style={styles.rdvBtnBlueText}>📍 Maps</Text>
-                </TouchableOpacity>
-              </View>
-            </BlurView>
-            </>)}
+            {myAppointments.length === 0 ? (
+              <BlurView intensity={50} tint="light" style={[styles.card, { alignItems: 'center', paddingVertical: 20 }]}>
+                <Text style={{ fontSize: 22, marginBottom: 8 }}>📅</Text>
+                <Text style={[styles.itemTitle, { marginBottom: 4 }]}>Aucun rendez-vous</Text>
+                <Text style={styles.itemSub}>Prends RDV depuis le profil d'une coiffeuse</Text>
+              </BlurView>
+            ) : (
+              myAppointments.map(a => {
+                const isPast = a.scheduled_at && new Date(a.scheduled_at) < new Date();
+                const isCancelled = a.status === 'cancelled' || a.status === 'no_show';
+                const statusMap = {
+                  pending:   { label: 'En attente', color: '#B06A00', bg: 'rgba(176,106,0,0.1)' },
+                  confirmed: { label: 'Confirmé',   color: '#7C3D8F', bg: 'rgba(124,61,143,0.1)' },
+                  done:      { label: 'Terminé',    color: 'rgba(28,28,30,0.4)', bg: 'rgba(28,28,30,0.06)' },
+                  cancelled: { label: 'Annulé',     color: '#C0392B', bg: 'rgba(192,57,43,0.1)' },
+                  no_show:   { label: 'Absent',     color: '#C0392B', bg: 'rgba(192,57,43,0.1)' },
+                };
+                const st = statusMap[a.status] || statusMap.pending;
+                const dateLabel = a.scheduled_at
+                  ? new Date(a.scheduled_at).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })
+                  : '—';
+                const timeLabel = a.time?.slice(0, 5) || (a.scheduled_at
+                  ? new Date(a.scheduled_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+                  : '—');
+                return (
+                  <BlurView key={a.id} intensity={55} tint="light" style={[styles.card, { marginBottom: 8, opacity: isCancelled ? 0.6 : 1 }]}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                      <View>
+                        <Text style={[styles.itemTitle, { marginBottom: 2 }]}>
+                          {dateLabel} · {timeLabel}
+                        </Text>
+                        <Text style={styles.itemSub}>
+                          {a.coiffeuses?.name || 'Coiffeuse'}{a.coiffeuses?.salons?.name ? ` · ${a.coiffeuses.salons.name}` : ''}
+                        </Text>
+                      </View>
+                      <View style={[{ borderRadius: 20, paddingHorizontal: 9, paddingVertical: 4 }, { backgroundColor: st.bg }]}>
+                        <Text style={[{ fontSize: 11, fontWeight: '600' }, { color: st.color }]}>{st.label}</Text>
+                      </View>
+                    </View>
+                    {a.service ? (
+                      <View style={[styles.infoRow, { borderBottomWidth: 0, paddingBottom: 0 }]}>
+                        <Text style={styles.infoL}>Prestation</Text>
+                        <Text style={styles.infoV}>{a.service}</Text>
+                      </View>
+                    ) : null}
+                    {(a.status === 'pending' || a.status === 'confirmed') && !isPast && (
+                      <TouchableOpacity
+                        style={{ marginTop: 10, borderRadius: 8, paddingVertical: 8, alignItems: 'center', backgroundColor: 'rgba(192,57,43,0.08)', borderWidth: 0.5, borderColor: 'rgba(192,57,43,0.2)' }}
+                        onPress={() => {
+                          Alert.alert(
+                            'Annuler ce rendez-vous ?',
+                            'Tu ne pourras pas revenir en arrière. La coiffeuse sera notifiée.',
+                            [
+                              { text: 'Garder', style: 'cancel' },
+                              {
+                                text: 'Annuler le RDV', style: 'destructive',
+                                onPress: async () => {
+                                  await supabase.from('appointments').update({ status: 'cancelled' }).eq('id', a.id);
+                                  setMyAppointments(prev => prev.map(p => p.id === a.id ? { ...p, status: 'cancelled' } : p));
+                                  // Notifie la coiffeuse
+                                  if (a.coiffeuse_id) {
+                                    const { data: coifRow } = await supabase
+                                      .from('coiffeuses').select('user_id, name').eq('id', a.coiffeuse_id).maybeSingle();
+                                    if (coifRow?.user_id) {
+                                      const dateLabel = a.scheduled_at
+                                        ? new Date(a.scheduled_at).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })
+                                        : '—';
+                                      supabase.from('notifications').insert({
+                                        recipient_user_id: coifRow.user_id,
+                                        type:  'appointment_cancelled_by_client',
+                                        title: 'RDV annulé par la cliente ❌',
+                                        body:  `Le RDV du ${dateLabel} a été annulé par la cliente.`,
+                                        data:  JSON.stringify({ screen: 'Agenda' }),
+                                        read:  false,
+                                      });
+                                    }
+                                  }
+                                },
+                              },
+                            ]
+                          );
+                        }}>
+                        <Text style={{ fontSize: 12, fontWeight: '600', color: '#C0392B' }}>Annuler ce RDV</Text>
+                      </TouchableOpacity>
+                    )}
+                  </BlurView>
+                );
+              })
+            )}
 
             {/* RAPPELS */}
             <View style={styles.secRow}>

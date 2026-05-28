@@ -14,7 +14,6 @@ import PhotoViewer from './PhotoViewer';
 import { CoiffeuseTabBar } from './CoiffeuseHomeScreen';
 
 const { width } = Dimensions.get('window');
-const DAYS_FULL = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
 
 export default function CoiffeuseSalonScreen({ navigation }) {
   const [salon, setSalon] = useState(null);
@@ -32,6 +31,7 @@ export default function CoiffeuseSalonScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
 
   const [shopProducts, setShopProducts] = useState([]);
+  const [appointments, setAppointments] = useState([]);
 
   const [bookTab, setBookTab] = useState('public');
   const [selectedBarber, setSelectedBarber] = useState(null);
@@ -41,8 +41,8 @@ export default function CoiffeuseSalonScreen({ navigation }) {
   const [showPrestForm, setShowPrestForm] = useState(false);
   const [prestForm, setPrestForm] = useState({ nom: '', categorie: 'tresses', emoji: '💆', prix_min: '', prix_max: '', duree_min: '', description: '' });
 
-  const [clientsTab, setClientsTab] = useState('all');
-  const [clientsBarberFilter, setClientsBarberFilter] = useState(null);
+  const [clientSearch, setClientSearch] = useState('');
+  const [clientFilter, setClientFilter] = useState('all');
   const [uploading, setUploading] = useState(false);
   const [salonPhotos, setSalonPhotos] = useState([]);
   const [heroIndex, setHeroIndex] = useState(0);
@@ -121,6 +121,20 @@ export default function CoiffeuseSalonScreen({ navigation }) {
       if (cutsRes.count !== null) setCutsCount(cutsRes.count);
 
       const salonBarberIds = (barbersRes.data || []).map(b => b.id);
+
+      if (salonBarberIds.length) {
+        const sixMonthsAgo = new Date();
+        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+        const { data: apptData } = await supabase
+          .from('appointments')
+          .select('id, date, time, status, coiffeuse_id, cliente_id, services(name, price)')
+          .in('coiffeuse_id', salonBarberIds)
+          .neq('status', 'cancelled')
+          .gte('date', sixMonthsAgo.toISOString().slice(0, 10))
+          .order('date', { ascending: true });
+        if (apptData) setAppointments(apptData);
+      }
+
       if (salonBarberIds.length) {
         const { data: queueDoneData } = await supabase
           .from('queue')
@@ -135,8 +149,10 @@ export default function CoiffeuseSalonScreen({ navigation }) {
           const uniqueIds = [];
           const lastCutById = {};
           const barberIdsById = {};
+          const reservationsCountById = {};
           for (const row of queueDoneData) {
             if (!row.client_id) continue;
+            reservationsCountById[row.client_id] = (reservationsCountById[row.client_id] || 0) + 1;
             if (!seen.has(row.client_id)) {
               seen.add(row.client_id);
               uniqueIds.push(row.client_id);
@@ -146,12 +162,17 @@ export default function CoiffeuseSalonScreen({ navigation }) {
             if (row.barber_id) barberIdsById[row.client_id].add(row.barber_id);
           }
           const { data: clientRows } = await supabase
-            .from('clientes').select('id, name, avatar_url, fresh_score').in('id', uniqueIds);
+            .from('clientes').select('id, name, avatar_url, fresh_score, user_id').in('id', uniqueIds);
           if (clientRows) {
             const ordered = uniqueIds
               .map(id => clientRows.find(c => c.id === id))
               .filter(Boolean)
-              .map(c => ({ ...c, lastCut: lastCutById[c.id], barberIds: barberIdsById[c.id] }));
+              .map(c => ({
+                ...c,
+                lastCut: lastCutById[c.id],
+                barberIds: barberIdsById[c.id],
+                reservationsCount: reservationsCountById[c.id] || 0,
+              }));
             setClients(ordered);
           }
         }
@@ -335,15 +356,6 @@ export default function CoiffeuseSalonScreen({ navigation }) {
   const privateBookPhotos = bookPhotos.filter(p => p.is_private);
   const displayBookPhotos = bookTab === 'public' ? publicBookPhotos : privateBookPhotos;
 
-  const filteredClients = clientsBarberFilter
-    ? clients.filter(c => c.barberIds?.has(clientsBarberFilter))
-    : clients;
-
-  const sortedClients = [...filteredClients].sort((a, b) =>
-    clientsTab === 'all'
-      ? (a.name || '').localeCompare(b.name || '')
-      : new Date(b.lastCut) - new Date(a.lastCut)
-  );
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -455,14 +467,16 @@ export default function CoiffeuseSalonScreen({ navigation }) {
         </BlurView>
 
         {/* TABS */}
-        <BlurView intensity={40} tint="light" style={styles.tabs}>
-          {['Infos', 'Équipe', 'Catalogue', 'Avis', 'Book', 'Clients'].map((t) => (
-            <TouchableOpacity key={t} style={styles.tab} onPress={() => { setActiveTab(t); setEditMode(false); }}>
-              <Text style={[styles.tabText, activeTab === t && styles.tabActive]}>{t}</Text>
-              {activeTab === t && <View style={styles.tabLine} />}
-            </TouchableOpacity>
-          ))}
-        </BlurView>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <BlurView intensity={40} tint="light" style={[styles.tabs, { paddingHorizontal: 4 }]}>
+            {['Infos', 'Catalogue', 'Avis', 'Clients', 'Activité', 'Boutique'].map((t) => (
+              <TouchableOpacity key={t} style={styles.tab} onPress={() => { setActiveTab(t); setEditMode(false); }}>
+                <Text style={[styles.tabText, activeTab === t && styles.tabActive]}>{t}</Text>
+                {activeTab === t && <View style={styles.tabLine} />}
+              </TouchableOpacity>
+            ))}
+          </BlurView>
+        </ScrollView>
 
         {/* ── INFOS ── */}
         {activeTab === 'Infos' && (
@@ -480,19 +494,12 @@ export default function CoiffeuseSalonScreen({ navigation }) {
               </BlurView>
             ) : null}
 
-            <BlurView intensity={60} tint="light" style={styles.infoCard}>
-              <Text style={styles.infoTitle}>🕐 Horaires</Text>
-              {hours.length > 0 ? hours.map((h) => (
-                <View key={h.day_of_week} style={styles.dayRow}>
-                  <Text style={styles.dayLabel}>{DAYS_FULL[h.day_of_week]}</Text>
-                  <Text style={[styles.dayHours, h.is_closed && styles.dayClosed]}>
-                    {h.is_closed ? 'Fermé' : `${h.open_time?.slice(0, 5)} – ${h.close_time?.slice(0, 5)}`}
-                  </Text>
-                </View>
-              )) : (
-                <Text style={{ fontSize: 13, color: 'rgba(28,28,30,0.4)' }}>Horaires non configurés</Text>
-              )}
-            </BlurView>
+            {(currentBarber?.intervention_zone || salon?.intervention_zone) ? (
+              <BlurView intensity={60} tint="light" style={styles.infoCard}>
+                <Text style={styles.infoTitle}>📍 Zone d'intervention</Text>
+                <Text style={styles.infoValue}>{currentBarber?.intervention_zone || salon?.intervention_zone}</Text>
+              </BlurView>
+            ) : null}
 
             {(salon?.transport || salon?.parking || salon?.pmr || salon?.access_notes) ? (
               <BlurView intensity={60} tint="light" style={styles.infoCard}>
@@ -524,50 +531,42 @@ export default function CoiffeuseSalonScreen({ navigation }) {
               </BlurView>
             ) : null}
 
-            {(salon?.phone || salon?.instagram) ? (
+            {(salon?.phone || salon?.instagram || salon?.tiktok) ? (
               <BlurView intensity={60} tint="light" style={styles.infoCard}>
-                <Text style={styles.infoTitle}>📞 Contact</Text>
-                {salon?.phone ? <Text style={styles.infoValue}>{salon.phone}</Text> : null}
-                {salon?.instagram ? <Text style={styles.infoSub}>@{salon.instagram}</Text> : null}
+                {salon?.phone ? (
+                  <>
+                    <Text style={styles.infoTitle}>📞 Téléphone</Text>
+                    <Text style={[styles.infoValue, { marginBottom: 12 }]}>{salon.phone}</Text>
+                  </>
+                ) : null}
+                {(salon?.instagram || salon?.tiktok) ? (
+                  <>
+                    <Text style={styles.infoTitle}>🌐 Réseaux sociaux</Text>
+                    {salon?.instagram ? (
+                      <View style={styles.socialRow}>
+                        <View style={[styles.socialIcon, { backgroundColor: 'rgba(193,53,132,0.12)' }]}>
+                          <Text style={{ fontSize: 14 }}>📸</Text>
+                        </View>
+                        <Text style={styles.socialHandle}>@{salon.instagram}</Text>
+                        <Text style={styles.socialLabel}>Instagram</Text>
+                      </View>
+                    ) : null}
+                    {salon?.tiktok ? (
+                      <View style={styles.socialRow}>
+                        <View style={[styles.socialIcon, { backgroundColor: 'rgba(0,0,0,0.07)' }]}>
+                          <Text style={{ fontSize: 14 }}>🎵</Text>
+                        </View>
+                        <Text style={styles.socialHandle}>@{salon.tiktok}</Text>
+                        <Text style={styles.socialLabel}>TikTok</Text>
+                      </View>
+                    ) : null}
+                  </>
+                ) : null}
               </BlurView>
             ) : null}
           </View>
         )}
 
-        {/* ── ÉQUIPE ── */}
-        {activeTab === 'Équipe' && (
-          <View>
-            <View style={styles.secRow}>
-              <Text style={styles.secTitle}>✂ L'équipe</Text>
-              <Text style={styles.secSub}>{barbers.length} coiffeuses</Text>
-            </View>
-            {barbers.map((b) => (
-              <TouchableOpacity key={b.id} activeOpacity={0.85}
-                onPress={() => navigation.navigate('BarberProfile', { barber: b })}>
-                <BlurView intensity={55} tint="light" style={styles.teamCard}>
-                  <View style={styles.teamAv}>
-                    {b.photo_url ? (
-                      <Image source={{ uri: b.photo_url }} style={styles.teamAvImg} />
-                    ) : (
-                      <Text style={styles.teamAvText}>{b.name?.split(' ').map(n => n[0]).join('')}</Text>
-                    )}
-                  </View>
-                  <View style={styles.teamInfo}>
-                    <Text style={styles.teamName}>{b.name}</Text>
-                    <Text style={styles.teamSpec}>{b.specialty || 'Coiffeuse'}</Text>
-                    <Text style={styles.teamNote}>★ {b.rating || '—'}</Text>
-                  </View>
-                  <View style={[styles.teamBadge, { backgroundColor: b.role === 'manager' ? 'rgba(168,133,42,0.12)' : 'rgba(124,61,143,0.12)' }]}>
-                    <Text style={[styles.teamBadgeText, { color: b.role === 'manager' ? '#A8852A' : '#7C3D8F' }]}>
-                      {b.role === 'manager' ? 'Gestionnaire' : 'Coiffeuse'}
-                    </Text>
-                  </View>
-                  <Text style={{ fontSize: 16, color: 'rgba(28,28,30,0.25)', marginLeft: 4 }}>→</Text>
-                </BlurView>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
 
         {/* ── CATALOGUE ── */}
         {activeTab === 'Catalogue' && (
@@ -764,205 +763,219 @@ export default function CoiffeuseSalonScreen({ navigation }) {
           </View>
         )}
 
-        {/* ── BOOK ── */}
-        {activeTab === 'Book' && (
-          <View>
-            {/* Sous-onglets Publiques / Privées */}
-            <View style={styles.bookTabsRow}>
-              {['public', 'private'].map(t => (
-                <TouchableOpacity key={t}
-                  style={[styles.bookTabBtn, bookTab === t && styles.bookTabBtnActive]}
-                  onPress={() => { setBookTab(t); setEditMode(false); }}>
-                  <Text style={[styles.bookTabText, bookTab === t && styles.bookTabTextActive]}>
-                    {t === 'public' ? `Publiques (${publicBookPhotos.length})` : `Privées (${privateBookPhotos.length})`}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+        {/* ── ACTIVITÉ ── */}
+        {activeTab === 'Activité' && (() => {
+          const totalCA = appointments.reduce((sum, a) => sum + (a.services?.price || 0), 0);
+          const avgCA = appointments.length > 0 ? Math.round(totalCA / appointments.length) : 0;
 
-            {/* Bouton importer / terminer */}
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginBottom: 8 }}>
-              {!editMode ? (
-                <TouchableOpacity style={styles.importBtn} onPress={showPhotoOptions} disabled={uploading}>
-                  {uploading ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.importBtnText}>+ Importer une photo</Text>}
-                </TouchableOpacity>
-              ) : (
-                <TouchableOpacity onPress={() => setEditMode(false)}
-                  style={{ backgroundColor: 'rgba(28,28,30,0.88)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 6 }}>
-                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Terminer</Text>
-                </TouchableOpacity>
-              )}
-            </View>
+          const serviceMap = {};
+          appointments.forEach(a => {
+            const name = a.services?.name || 'Autre';
+            serviceMap[name] = (serviceMap[name] || 0) + 1;
+          });
+          const topServices = Object.entries(serviceMap).sort((a, b) => b[1] - a[1]).slice(0, 5);
+          const totalAppts = appointments.length;
 
-            {/* Grille photos */}
-            {displayBookPhotos.length === 0 ? (
-              <View style={{ width: '100%', padding: 32, alignItems: 'center' }}>
-                <Text style={{ fontSize: 13, color: 'rgba(28,28,30,0.4)', textAlign: 'center' }}>
-                  Aucune photo {bookTab === 'public' ? 'publique' : 'privée'}
-                </Text>
-              </View>
-            ) : (
-              <View style={{ paddingHorizontal: 16, gap: 6 }}>
-                {/* Photo hero */}
-                {displayBookPhotos[0] && (() => {
-                  const p = displayBookPhotos[0];
-                  return (
-                    <TouchableOpacity key={p.id} activeOpacity={0.85}
-                      onPress={() => !editMode && setSelectedPhotoIndex(0)}
-                      onLongPress={() => setEditMode(true)} delayLongPress={400}
-                      style={{ width: '100%', height: 220, borderRadius: 16, overflow: 'hidden', backgroundColor: '#3A1A06' }}>
-                      {p.photo_url ? <Image source={{ uri: p.photo_url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : null}
-                      <View style={{ position: 'absolute', top: 7, left: 7, backgroundColor: 'rgba(168,133,42,0.85)', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2 }}>
-                        <Text style={{ fontSize: 9, fontWeight: '700', color: '#fff' }}>🔥 Top</Text>
+          const now = new Date();
+          const monthlyMap = {};
+          const monthLabels = {};
+          for (let i = 5; i >= 0; i--) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            monthlyMap[key] = 0;
+            monthLabels[key] = d.toLocaleDateString('fr-FR', { month: 'short' });
+          }
+          appointments.forEach(a => {
+            if (!a.date) return;
+            const key = a.date.slice(0, 7);
+            if (key in monthlyMap) monthlyMap[key] += a.services?.price || 0;
+          });
+          const monthlyData = Object.entries(monthlyMap);
+          const maxMonthCA = Math.max(...monthlyData.map(([, v]) => v), 1);
+
+          return (
+            <View>
+              {/* KPIs */}
+              <BlurView intensity={55} tint="light" style={[styles.infoCard, { flexDirection: 'row', gap: 0 }]}>
+                {[
+                  { val: `${totalCA}€`, lbl: 'CA 6 mois' },
+                  { val: totalAppts, lbl: 'RDV' },
+                  { val: `${avgCA}€`, lbl: 'Moy / RDV' },
+                ].map((k, i) => (
+                  <View key={k.lbl} style={[styles.kpiCell, i < 2 && { borderRightWidth: 0.5, borderRightColor: 'rgba(28,28,30,0.1)' }]}>
+                    <Text style={styles.kpiVal}>{k.val}</Text>
+                    <Text style={styles.kpiLbl}>{k.lbl}</Text>
+                  </View>
+                ))}
+              </BlurView>
+
+              {/* Évolution mensuelle */}
+              <BlurView intensity={55} tint="light" style={styles.infoCard}>
+                <Text style={styles.infoTitle}>📈 Chiffre d'affaires — 6 mois</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 6, height: 80, marginTop: 8 }}>
+                  {monthlyData.map(([key, val]) => {
+                    const barH = Math.max(4, Math.round((val / maxMonthCA) * 70));
+                    return (
+                      <View key={key} style={{ flex: 1, alignItems: 'center', gap: 4 }}>
+                        <Text style={{ fontSize: 8, color: '#A8852A', fontWeight: '700' }}>{val > 0 ? `${val}€` : ''}</Text>
+                        <View style={{ width: '100%', height: barH, borderRadius: 5, backgroundColor: val > 0 ? '#A8852A' : 'rgba(168,133,42,0.15)' }} />
+                        <Text style={{ fontSize: 8, color: 'rgba(28,28,30,0.45)', textTransform: 'capitalize' }}>{monthLabels[key]}</Text>
                       </View>
-                      {editMode && (
-                        <>
-                          <TouchableOpacity activeOpacity={0.7} onPress={() => toggleBookPhotoPrivacy(p)} style={styles.bookCellOptionLeft}>
-                            <Text style={{ fontSize: 12, color: '#fff' }}>{p.is_private ? '🔓' : '🔒'}</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity activeOpacity={0.7} onPress={() => confirmDeleteBookPhoto(p)} style={styles.bookCellOptionRight}>
-                            <Text style={{ fontSize: 11, color: '#fff', fontWeight: '800' }}>✕</Text>
-                          </TouchableOpacity>
-                        </>
-                      )}
-                    </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </BlurView>
+
+              {/* Répartition prestations */}
+              <BlurView intensity={55} tint="light" style={styles.infoCard}>
+                <Text style={styles.infoTitle}>💈 Top prestations</Text>
+                {topServices.length === 0 ? (
+                  <Text style={{ fontSize: 13, color: 'rgba(28,28,30,0.4)' }}>Aucun RDV enregistré</Text>
+                ) : topServices.map(([name, count]) => {
+                  const pct = Math.round((count / totalAppts) * 100);
+                  return (
+                    <View key={name} style={{ marginBottom: 10 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: '#1C1C1E' }}>{name}</Text>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#A8852A' }}>{count} RDV · {pct}%</Text>
+                      </View>
+                      <View style={{ height: 5, borderRadius: 3, backgroundColor: 'rgba(168,133,42,0.15)' }}>
+                        <View style={{ height: 5, borderRadius: 3, backgroundColor: '#A8852A', width: `${pct}%` }} />
+                      </View>
+                    </View>
                   );
-                })()}
-
-                {/* Photos 2-3 : deux colonnes */}
-                {displayBookPhotos.slice(1, 3).length > 0 && (
-                  <View style={{ flexDirection: 'row', gap: 6 }}>
-                    {displayBookPhotos.slice(1, 3).map((p, idx) => {
-                      const cellW = (width - 32 - 6) / 2;
-                      return (
-                        <TouchableOpacity key={p.id} activeOpacity={0.85}
-                          onPress={() => !editMode && setSelectedPhotoIndex(idx + 1)}
-                          onLongPress={() => setEditMode(true)} delayLongPress={400}
-                          style={{ width: cellW, height: 150, borderRadius: 14, overflow: 'hidden', backgroundColor: '#3A1A06' }}>
-                          {p.photo_url ? <Image source={{ uri: p.photo_url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : null}
-                          {editMode && (
-                            <>
-                              <TouchableOpacity activeOpacity={0.7} onPress={() => toggleBookPhotoPrivacy(p)} style={styles.bookCellOptionLeft}>
-                                <Text style={{ fontSize: 12, color: '#fff' }}>{p.is_private ? '🔓' : '🔒'}</Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity activeOpacity={0.7} onPress={() => confirmDeleteBookPhoto(p)} style={styles.bookCellOptionRight}>
-                                <Text style={{ fontSize: 11, color: '#fff', fontWeight: '800' }}>✕</Text>
-                              </TouchableOpacity>
-                            </>
-                          )}
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                )}
-
-                {/* Photos 4+ : trois colonnes */}
-                {displayBookPhotos.slice(3).length > 0 && (
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                    {displayBookPhotos.slice(3).map((p, idx) => {
-                      const cellW = (width - 32 - 12) / 3;
-                      return (
-                        <TouchableOpacity key={p.id} activeOpacity={0.85}
-                          onPress={() => !editMode && setSelectedPhotoIndex(idx + 3)}
-                          onLongPress={() => setEditMode(true)} delayLongPress={400}
-                          style={{ width: cellW, height: cellW, borderRadius: 12, overflow: 'hidden', backgroundColor: '#3A1A06' }}>
-                          {p.photo_url ? <Image source={{ uri: p.photo_url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : null}
-                          {editMode && (
-                            <>
-                              <TouchableOpacity activeOpacity={0.7} onPress={() => toggleBookPhotoPrivacy(p)} style={styles.bookCellOptionLeft}>
-                                <Text style={{ fontSize: 12, color: '#fff' }}>{p.is_private ? '🔓' : '🔒'}</Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity activeOpacity={0.7} onPress={() => confirmDeleteBookPhoto(p)} style={styles.bookCellOptionRight}>
-                                <Text style={{ fontSize: 11, color: '#fff', fontWeight: '800' }}>✕</Text>
-                              </TouchableOpacity>
-                            </>
-                          )}
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                )}
-              </View>
-            )}
-          </View>
-        )}
+                })}
+              </BlurView>
+            </View>
+          );
+        })()}
 
         {/* ── CLIENTS ── */}
-        {activeTab === 'Clients' && (
-          <View>
-            <View style={styles.secRow}>
-              <Text style={styles.secTitle}>👤 Clients</Text>
-              <Text style={styles.secSub}>{sortedClients.length} / {clients.length}</Text>
-            </View>
+        {activeTab === 'Clients' && (() => {
+          const todayStr = new Date().toISOString().slice(0, 10);
+          const tomorrowStr = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
 
-            {/* Filtre par Coiffeuse */}
-            {barbers.length > 1 && (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ paddingHorizontal: 16, gap: 8, paddingBottom: 10 }}>
-                <TouchableOpacity
-                  style={[styles.barberPill, !clientsBarberFilter && styles.barberPillActive]}
-                  onPress={() => setClientsBarberFilter(null)}>
-                  <Text style={[styles.barberPillText, !clientsBarberFilter && styles.barberPillTextActive]}>Tous</Text>
-                </TouchableOpacity>
-                {barbers.map(b => (
-                  <TouchableOpacity key={b.id}
-                    style={[styles.barberPill, clientsBarberFilter === b.id && styles.barberPillActive]}
-                    onPress={() => setClientsBarberFilter(clientsBarberFilter === b.id ? null : b.id)}>
-                    <Text style={[styles.barberPillText, clientsBarberFilter === b.id && styles.barberPillTextActive]}>{b.name}</Text>
+          const upcomingByClient = {};
+          appointments.forEach(a => {
+            if (a.date >= todayStr && a.cliente_id) {
+              const ex = upcomingByClient[a.cliente_id];
+              if (!ex || a.date < ex.date || (a.date === ex.date && (a.time || '') < (ex.time || ''))) {
+                upcomingByClient[a.cliente_id] = a;
+              }
+            }
+          });
+
+          function fmtNextAppt(appt) {
+            if (!appt) return null;
+            let label;
+            if (appt.date === todayStr) label = "Aujourd'hui";
+            else if (appt.date === tomorrowStr) label = 'Demain';
+            else label = new Date(appt.date + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' });
+            return appt.time ? `${label} à ${appt.time.slice(0, 5)}` : label;
+          }
+
+          const searchLower = clientSearch.toLowerCase();
+          const visibleClients = clients
+            .filter(c => {
+              if (searchLower && !c.name?.toLowerCase().includes(searchLower)) return false;
+              const count = c.reservationsCount || 0;
+              if (clientFilter === 'new') return count < 3;
+              if (clientFilter === 'loyal') return count >= 3;
+              return true;
+            })
+            .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+          return (
+            <View style={{ paddingBottom: 16 }}>
+              {/* Barre de recherche */}
+              <View style={styles.clientSearchWrap}>
+                <BlurView intensity={60} tint="light" style={styles.clientSearchBar}>
+                  <Text style={{ fontSize: 15, color: 'rgba(28,28,30,0.28)' }}>🔍</Text>
+                  <TextInput
+                    style={styles.clientSearchInput}
+                    placeholder="Rechercher une cliente..."
+                    placeholderTextColor="rgba(28,28,30,0.35)"
+                    value={clientSearch}
+                    onChangeText={setClientSearch}
+                  />
+                  {clientSearch.length > 0 && (
+                    <TouchableOpacity onPress={() => setClientSearch('')}>
+                      <Text style={{ fontSize: 13, color: 'rgba(28,28,30,0.3)' }}>✕</Text>
+                    </TouchableOpacity>
+                  )}
+                </BlurView>
+              </View>
+
+              {/* Filtres */}
+              <View style={styles.clientFilterRow}>
+                {[
+                  { key: 'all', label: 'Toutes' },
+                  { key: 'new', label: 'Nouvelles' },
+                  { key: 'loyal', label: 'Fidèles' },
+                ].map(f => (
+                  <TouchableOpacity key={f.key}
+                    style={[styles.clientFilterBtn, clientFilter === f.key && styles.clientFilterBtnActive]}
+                    onPress={() => setClientFilter(f.key)}>
+                    <Text style={[styles.clientFilterText, clientFilter === f.key && styles.clientFilterTextActive]}>
+                      {f.label}
+                    </Text>
                   </TouchableOpacity>
                 ))}
-              </ScrollView>
-            )}
+              </View>
 
-            <View style={styles.bookTabsRow}>
-              {[{ key: 'all', label: 'Alphabétique' }, { key: 'recent', label: 'Récents' }].map(t => (
-                <TouchableOpacity key={t.key}
-                  style={[styles.bookTabBtn, clientsTab === t.key && styles.bookTabBtnActive]}
-                  onPress={() => setClientsTab(t.key)}>
-                  <Text style={[styles.bookTabText, clientsTab === t.key && styles.bookTabTextActive]}>{t.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            {sortedClients.length === 0 ? (
-              <BlurView intensity={55} tint="light" style={[styles.infoCard, { alignItems: 'center' }]}>
-                <Text style={{ fontSize: 13, color: 'rgba(28,28,30,0.4)' }}>Aucun client pour l'instant</Text>
+              {/* Liste */}
+              <BlurView intensity={50} tint="light" style={styles.clientListCard}>
+                {visibleClients.length === 0 ? (
+                  <View style={{ padding: 24, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 13, color: 'rgba(28,28,30,0.4)' }}>Aucune cliente</Text>
+                  </View>
+                ) : visibleClients.map((client, idx) => {
+                  const count = client.reservationsCount || 0;
+                  const isLoyal = count >= 3;
+                  const isVip = count >= 5;
+                  const nextAppt = upcomingByClient[client.id];
+                  const nextLabel = fmtNextAppt(nextAppt);
+                  return (
+                    <TouchableOpacity key={client.id} activeOpacity={0.7}
+                      style={[styles.clientCardRow, idx > 0 && styles.clientCardSep]}
+                      onPress={() => navigation.navigate('PublicProfile', { client })}>
+                      <View style={styles.clientCardAv}>
+                        {client.avatar_url ? (
+                          <Image source={{ uri: client.avatar_url }}
+                            style={{ width: 52, height: 52, borderRadius: 26 }} resizeMode="cover" />
+                        ) : (
+                          <View style={styles.clientCardAvFallback}>
+                            <Text style={styles.clientCardAvInitial}>{client.name?.[0]?.toUpperCase()}</Text>
+                          </View>
+                        )}
+                      </View>
+                      <View style={{ flex: 1, gap: 2 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <Text style={styles.clientCardName}>{client.name}</Text>
+                          {isVip && (
+                            <View style={styles.vipBadge}>
+                              <Text style={styles.vipBadgeText}>♥ VIP</Text>
+                            </View>
+                          )}
+                        </View>
+                        <Text style={styles.clientCardSub}>
+                          {isLoyal ? 'Fidèle' : 'Nouvelle'}{' · '}{count} réservation{count > 1 ? 's' : ''}
+                        </Text>
+                        {nextLabel ? (
+                          <Text style={styles.clientCardNext}>Prochain RDV : {nextLabel}</Text>
+                        ) : null}
+                      </View>
+                      <Text style={{ fontSize: 20, color: 'rgba(28,28,30,0.2)', marginLeft: 4 }}>›</Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </BlurView>
-            ) : sortedClients.map((client) => (
-              <TouchableOpacity key={client.id} activeOpacity={0.85}
-                onPress={() => {
-                  const barberForClient = (clientsBarberFilter && barbers.find(b => b.id === clientsBarberFilter)) || currentBarber;
-                  navigation.navigate('BarberClientDetail', {
-                    client,
-                    barberId: barberForClient?.id,
-                    barberName: barberForClient?.name,
-                  });
-                }}>
-                <BlurView intensity={55} tint="light" style={styles.clientRow}>
-                  <View style={styles.clientAv}>
-                    {client.avatar_url ? (
-                      <Image source={{ uri: client.avatar_url }}
-                        style={{ width: 44, height: 44, borderRadius: 13 }} resizeMode="cover" />
-                    ) : (
-                      <Text style={styles.clientAvText}>{client.name?.[0]}</Text>
-                    )}
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.clientName}>{client.name}</Text>
-                    {client.lastCut && (
-                      <Text style={styles.clientDate}>
-                        Dernière visite : {new Date(client.lastCut).toLocaleDateString('fr-FR')}
-                      </Text>
-                    )}
-                  </View>
-                  <Text style={{ fontSize: 16, color: 'rgba(28,28,30,0.25)' }}>→</Text>
-                </BlurView>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
+            </View>
+          );
+        })()}
 
-        {/* ── BOUTIQUE — désactivée V1, réactiver en V2 ── */}
-        {false && activeTab === 'Boutique' && (
+        {/* ── BOUTIQUE ── */}
+        {activeTab === 'Boutique' && (
           <View>
             <View style={styles.secRow}>
               <Text style={styles.secTitle}>🛍 Boutique</Text>
@@ -1011,6 +1024,15 @@ export default function CoiffeuseSalonScreen({ navigation }) {
 
       </ScrollView>}
 
+      {activeTab === 'Clients' && (
+        <TouchableOpacity
+          style={styles.clientFab}
+          activeOpacity={0.88}
+          onPress={() => Alert.alert('Ajouter une cliente', 'Fonctionnalité à venir')}>
+          <Text style={styles.clientFabText}>+ Cliente</Text>
+        </TouchableOpacity>
+      )}
+
       <PhotoViewer
         visible={selectedPhotoIndex !== null}
         photos={displayBookPhotos}
@@ -1055,8 +1077,8 @@ const styles = StyleSheet.create({
   scoreNum: { fontSize: 14, fontWeight: '800', color: '#A8852A' },
   scoreLbl: { fontSize: 9, color: 'rgba(28,28,30,0.55)', marginTop: 2 },
 
-  tabs: { flexDirection: 'row', overflow: 'hidden', borderBottomWidth: 0.5, borderBottomColor: 'rgba(255,255,255,0.5)', marginBottom: 4 },
-  tab: { flex: 1, paddingVertical: 10, alignItems: 'center', position: 'relative' },
+  tabs: { flexDirection: 'row', overflow: 'hidden', borderBottomWidth: 0.5, borderBottomColor: 'rgba(255,255,255,0.5)', marginBottom: 4, minWidth: '100%' },
+  tab: { paddingVertical: 10, paddingHorizontal: 14, alignItems: 'center', position: 'relative' },
   tabText: { fontSize: 9, fontWeight: '600', color: 'rgba(28,28,30,0.5)' },
   tabActive: { color: '#A8852A' },
   tabLine: { position: 'absolute', bottom: 0, width: '60%', height: 2, backgroundColor: '#A8852A', borderRadius: 1 },
@@ -1077,6 +1099,15 @@ const styles = StyleSheet.create({
   accessRow: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', marginBottom: 8 },
   accessIcon: { fontSize: 16, width: 24 },
   accessText: { flex: 1, fontSize: 13, color: 'rgba(28,28,30,0.7)', lineHeight: 18 },
+
+  socialRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
+  socialIcon: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  socialHandle: { flex: 1, fontSize: 14, fontWeight: '600', color: '#1C1C1E' },
+  socialLabel: { fontSize: 11, color: 'rgba(28,28,30,0.4)' },
+
+  kpiCell: { flex: 1, alignItems: 'center', paddingVertical: 8 },
+  kpiVal: { fontSize: 18, fontWeight: '800', color: '#A8852A' },
+  kpiLbl: { fontSize: 10, color: 'rgba(28,28,30,0.5)', marginTop: 2 },
 
   teamCard: { marginHorizontal: 16, marginBottom: 8, borderRadius: 14, overflow: 'hidden', padding: 12, flexDirection: 'row', gap: 10, alignItems: 'center', borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.85)' },
   teamAv: { width: 46, height: 46, borderRadius: 13, backgroundColor: 'rgba(168,133,42,0.15)', borderWidth: 1.5, borderColor: 'rgba(168,133,42,0.35)', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 },
@@ -1127,11 +1158,27 @@ const styles = StyleSheet.create({
   bookCellOptionLeft: { position: 'absolute', top: 5, left: 5, width: 24, height: 24, borderRadius: 7, backgroundColor: 'rgba(0,113,227,0.7)', alignItems: 'center', justifyContent: 'center', zIndex: 10 },
   bookCellOptionRight: { position: 'absolute', top: 5, right: 5, width: 24, height: 24, borderRadius: 7, backgroundColor: 'rgba(192,57,43,0.8)', alignItems: 'center', justifyContent: 'center', zIndex: 10 },
 
-  clientRow: { marginHorizontal: 16, marginBottom: 7, borderRadius: 14, overflow: 'hidden', padding: 12, flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.85)' },
-  clientAv: { width: 44, height: 44, borderRadius: 13, backgroundColor: 'rgba(168,133,42,0.12)', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 },
-  clientAvText: { fontSize: 16, fontWeight: '800', color: '#A8852A' },
-  clientName: { fontSize: 14, fontWeight: '700', color: '#1C1C1E' },
-  clientDate: { fontSize: 11, color: 'rgba(28,28,30,0.5)', marginTop: 2 },
+  clientSearchWrap: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 6 },
+  clientSearchBar: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 14, overflow: 'hidden', paddingHorizontal: 14, paddingVertical: 12, borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.9)' },
+  clientSearchInput: { flex: 1, fontSize: 14, color: '#1C1C1E' },
+  clientFilterRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 10 },
+  clientFilterBtn: { paddingHorizontal: 18, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(28,28,30,0.15)', backgroundColor: 'rgba(255,255,255,0.5)' },
+  clientFilterBtnActive: { backgroundColor: '#fff', borderColor: '#7C3D8F' },
+  clientFilterText: { fontSize: 13, fontWeight: '600', color: 'rgba(28,28,30,0.55)' },
+  clientFilterTextActive: { color: '#7C3D8F', fontWeight: '700' },
+  clientListCard: { marginHorizontal: 16, borderRadius: 18, overflow: 'hidden', borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.9)' },
+  clientCardRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 14, gap: 14 },
+  clientCardSep: { borderTopWidth: 0.5, borderTopColor: 'rgba(28,28,30,0.07)' },
+  clientCardAv: { width: 52, height: 52, borderRadius: 26, overflow: 'hidden', flexShrink: 0 },
+  clientCardAvFallback: { width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(168,133,42,0.12)', alignItems: 'center', justifyContent: 'center' },
+  clientCardAvInitial: { fontSize: 20, fontWeight: '800', color: '#A8852A' },
+  clientCardName: { fontSize: 15, fontWeight: '700', color: '#1C1C1E' },
+  clientCardSub: { fontSize: 12, color: 'rgba(28,28,30,0.5)' },
+  clientCardNext: { fontSize: 12, color: 'rgba(28,28,30,0.45)' },
+  vipBadge: { backgroundColor: 'rgba(124,61,143,0.1)', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2, borderWidth: 0.5, borderColor: 'rgba(124,61,143,0.25)' },
+  vipBadgeText: { fontSize: 10, fontWeight: '700', color: '#7C3D8F' },
+  clientFab: { position: 'absolute', bottom: 82, right: 20, backgroundColor: '#7C3D8F', borderRadius: 28, paddingHorizontal: 20, paddingVertical: 14, shadowColor: '#7C3D8F', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.38, shadowRadius: 16, elevation: 12 },
+  clientFabText: { fontSize: 14, fontWeight: '800', color: '#fff' },
 
   photoModalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)' },
   photoModalClose: { position: 'absolute', top: 50, left: 20, zIndex: 20, width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
