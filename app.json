@@ -1,0 +1,46 @@
+{
+  "expo": {
+    "name": "FreshGirlz",
+    "slug": "freshgirlz",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FAF4F8"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.freshgirlz.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FAF4F8"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.freshgirlz.app"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#7C3D8F"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "FreshGirlz a besoin d'accéder à ta galerie pour ajouter des photos à ton book."
+        }
+      ]
+    ]
+  }
+}
