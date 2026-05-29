@@ -186,7 +186,7 @@ export default function ReservationsScreen({ navigation }) {
             {activeTab === 'À venir' ? 'Aucun rendez-vous à venir' : 'Aucun rendez-vous passé'}
           </Text>
           <Text style={s.emptyDesc}>
-            {activeTab === 'À venir' ? 'Réserve avec une coiffeuse depuis l'accueil' : ''}
+            {activeTab === 'À venir' ? "Réserve avec une coiffeuse depuis l'accueil" : ''}
           </Text>
           {activeTab === 'À venir' && (
             <TouchableOpacity style={s.ctaBtn} onPress={() => navigation.navigate('Explorer')}>
