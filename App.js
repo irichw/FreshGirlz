@@ -4,6 +4,7 @@ import { createStackNavigator } from '@react-navigation/stack';
 import { StyleSheet, Text, View, TouchableOpacity, Animated, Dimensions } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
+import { Ionicons } from '@expo/vector-icons';
 import CoiffeuseDashboard from './CoiffeuseDashboard';
 import CoiffeuseHomeScreen from './CoiffeuseHomeScreen';
 import NotificationScreen from './NotificationScreen';
@@ -47,6 +48,8 @@ import CoiffeuseBookScreen from './CoiffeuseBookScreen';
 
 
 import HomeScreen from './HomeScreen';
+import ExplorerScreen from './ExplorerScreen';
+import ReservationsScreen from './ReservationsScreen';
 import SalonScreen from './SalonScreen';
 import QueueScreen from './QueueScreen';
 import { Image as RNImage } from 'react-native';
@@ -74,13 +77,15 @@ const FADE_OPTS = {
 };
 
 const CLIENT_TABS = [
-  { label: 'Accueil',   imgA: require('./assets/homefull.png'),    imgI: require('./assets/homevide.png'),   size: 22 },
-  { label: 'Feed',      imgA: require('./assets/Commufull.png'),   imgI: require('./assets/Commuvide.png'),  size: 28 },
-  { label: null,        isProfile: true },
+  { label: 'Accueil',     imgA: require('./assets/homefull.png'),  imgI: require('./assets/homevide.png'),  size: 22 },
+  { label: 'Explorer',   isIonicon: true, iconA: 'search',         iconI: 'search-outline',                size: 22 },
+  { label: 'Favoris',    isIonicon: true, iconA: 'heart',          iconI: 'heart-outline',                 size: 22 },
+  { label: 'RDV',        imgA: require('./assets/agendafull.png'), imgI: require('./assets/agendavide.png'), size: 22 },
+  { label: null,         isProfile: true },
 ];
 
 const { width: SCREEN_W } = Dimensions.get('window');
-const TAB_W = (SCREEN_W - 28) / 3;
+const TAB_W = (SCREEN_W - 28) / 5;
 
 function GlassTabBar({ state, navigation }) {
   const pillX = useRef(new Animated.Value(state.index)).current;
@@ -104,8 +109,8 @@ function GlassTabBar({ state, navigation }) {
   }, []);
 
   const translateX = pillX.interpolate({
-    inputRange: [0, 1, 2],
-    outputRange: [0, TAB_W, TAB_W * 2],
+    inputRange: [0, 1, 2, 3, 4],
+    outputRange: [0, TAB_W, TAB_W * 2, TAB_W * 3, TAB_W * 4],
   });
 
   return (
@@ -132,6 +137,15 @@ function GlassTabBar({ state, navigation }) {
                     <Text style={glassStyles.tabAvatarInitial}>M</Text>
                   </View>
                 )
+              ) : def.isIonicon ? (
+                <>
+                  <Ionicons
+                    name={isFocused ? def.iconA : def.iconI}
+                    size={def.size}
+                    color={isFocused ? '#7C3D8F' : 'rgba(28,28,30,0.4)'}
+                  />
+                  <Text style={[glassStyles.tabLabel, isFocused && glassStyles.tabLabelActive]}>{def.label}</Text>
+                </>
               ) : (
                 <>
                   <RNImage source={isFocused ? def.imgA : def.imgI} style={[glassStyles.tabImg, { width: def.size, height: def.size }]} />
@@ -166,9 +180,11 @@ function ClientTabs() {
       screenOptions={{ headerShown: false }}
       tabBar={props => <GlassTabBar {...props} />}
     >
-      <Tab.Screen name="Home"    component={HomeScreen} />
-      <Tab.Screen name="Feed"    component={CommunityScreen} />
-      <Tab.Screen name="Profile" component={ProfileScreen} />
+      <Tab.Screen name="Home"         component={HomeScreen} />
+      <Tab.Screen name="Explorer"     component={ExplorerScreen} />
+      <Tab.Screen name="Feed"         component={CommunityScreen} />
+      <Tab.Screen name="Reservations" component={ReservationsScreen} />
+      <Tab.Screen name="Profile"      component={ProfileScreen} />
     </Tab.Navigator>
   );
 }

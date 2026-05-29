@@ -162,37 +162,66 @@ function BarberCard({ item, onPress }) {
 
 // ── Main ─────────────────────────────────────────────────────────
 
+const FEED_TABS = ['Pour toi', 'Abonnements', 'Populaires'];
+
 export default function CommunityScreen({ navigation }) {
   const [feed,       setFeed]       = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [photoUri,   setPhotoUri]   = useState(null);
+  const [activeTab,  setActiveTab]  = useState('Pour toi');
   const photoOpacity = useState(new Animated.Value(0))[0];
 
-  useFocusEffect(useCallback(() => { loadFeed(); }, []));
+  useFocusEffect(useCallback(() => { loadFeed(activeTab); }, [activeTab]));
 
-  async function loadFeed() {
+  async function loadFeed(tab = activeTab, isRefresh = false) {
+    if (isRefresh) setRefreshing(true); else setLoading(true);
+
+    if (tab === 'Abonnements') {
+      // Récupérer les coiffeuses suivies par la cliente connectée
+      const { data: { session } } = await supabase.auth.getSession();
+      let followedIds = [];
+      if (session) {
+        const { data: client } = await supabase.from('clientes').select('id').eq('user_id', session.user.id).maybeSingle();
+        if (client) {
+          const { data: follows } = await supabase.from('followed_barbers').select('barber_id').eq('client_id', client.id);
+          followedIds = (follows || []).map(f => f.barber_id);
+        }
+      }
+      if (followedIds.length === 0) { setFeed([]); setLoading(false); setRefreshing(false); return; }
+      const [coupesRes, reviewsRes] = await Promise.all([
+        supabase.from('coupes').select('id, photo_url, service, likes, created_at, coiffeuses(id, name, photo_url)').in('barber_id', followedIds).order('created_at', { ascending: false }).limit(30),
+        supabase.from('reviews').select('id, rating, comment, created_at, coiffeuses(id, name, photo_url, salons(name)), clientes(id, name, avatar_url)').in('coiffeuse_id', followedIds).order('created_at', { ascending: false }).limit(20),
+      ]);
+      const merged = [
+        ...(coupesRes.data || []).map(c => ({ ...c, _type: 'photo' })),
+        ...(reviewsRes.data || []).map(r => ({ ...r, _type: 'review' })),
+      ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      setFeed(merged); setLoading(false); setRefreshing(false); return;
+    }
+
+    const isPopulaire = tab === 'Populaires';
     const [reviewsRes, salonsRes, coupesRes, barbersRes] = await Promise.all([
       supabase
         .from('reviews')
         .select('id, rating, comment, created_at, coiffeuses(id, name, photo_url, salons(name)), clientes(id, name, avatar_url)')
-        .order('created_at', { ascending: false })
+        .order(isPopulaire ? 'rating' : 'created_at', { ascending: false })
         .limit(30),
       supabase
         .from('salons')
         .select('id, name, photo_url, city, created_at')
         .order('created_at', { ascending: false })
-        .limit(20),
+        .limit(isPopulaire ? 0 : 20),
       supabase
         .from('coupes')
         .select('id, photo_url, service, likes, created_at, coiffeuses(id, name, photo_url)')
-        .order('created_at', { ascending: false })
+        .order(isPopulaire ? 'likes' : 'created_at', { ascending: false })
         .limit(30),
       supabase
         .from('coiffeuses')
         .select('id, name, photo_url, rating, created_at, salons(name)')
-        .order('created_at', { ascending: false })
-        .limit(20),
+        .order(isPopulaire ? 'rating' : 'created_at', { ascending: false })
+        .limit(isPopulaire ? 0 : 20),
     ]);
 
     const reviews = (reviewsRes.data || []).map(r => ({ ...r, _type: 'review' }));
@@ -209,8 +238,7 @@ export default function CommunityScreen({ navigation }) {
   }
 
   function onRefresh() {
-    setRefreshing(true);
-    loadFeed();
+    loadFeed(activeTab, true);
   }
 
   function openPhoto(uri) {
@@ -273,10 +301,18 @@ export default function CommunityScreen({ navigation }) {
 
       {/* Header */}
       <View style={s.header}>
-        <View>
-          <Text style={s.headerTitle}>Communauté</Text>
-          <Text style={s.headerSub}>Activités récentes sur FreshGirlz</Text>
-        </View>
+        <Text style={s.headerTitle}>Communauté</Text>
+      </View>
+
+      {/* Onglets */}
+      <View style={s.feedTabs}>
+        {FEED_TABS.map(tab => (
+          <TouchableOpacity key={tab}
+            style={[s.feedTab, activeTab === tab && s.feedTabActive]}
+            onPress={() => setActiveTab(tab)}>
+            <Text style={[s.feedTabTxt, activeTab === tab && s.feedTabTxtActive]}>{tab}</Text>
+          </TouchableOpacity>
+        ))}
       </View>
 
       {/* Feed */}
@@ -286,9 +322,15 @@ export default function CommunityScreen({ navigation }) {
         </View>
       ) : feed.length === 0 ? (
         <View style={s.emptyWrap}>
-          <Text style={s.emptyEmoji}>🌱</Text>
-          <Text style={s.emptyText}>Aucune activité pour le moment</Text>
-          <Text style={s.emptySub}>Reviens bientôt !</Text>
+          <Text style={s.emptyEmoji}>{activeTab === 'Abonnements' ? '👥' : '🌱'}</Text>
+          <Text style={s.emptyText}>
+            {activeTab === 'Abonnements'
+              ? 'Suis des coiffeuses pour voir leur activité'
+              : 'Aucune activité pour le moment'}
+          </Text>
+          <Text style={s.emptySub}>
+            {activeTab === 'Abonnements' ? 'Explore les profils depuis l\'accueil' : 'Reviens bientôt !'}
+          </Text>
         </View>
       ) : (
         <FlatList
@@ -316,15 +358,21 @@ export default function CommunityScreen({ navigation }) {
 }
 
 const s = StyleSheet.create({
-  safe:     { flex: 1, backgroundColor: '#F2F2F7' },
+  safe:     { flex: 1, backgroundColor: '#FAF4F8' },
   wallpaper:{ ...StyleSheet.absoluteFillObject, overflow: 'hidden' },
-  blob1:    { position: 'absolute', width: 280, height: 280, borderRadius: 140, backgroundColor: 'rgba(124,61,143,0.07)',  top: -60,  left: -60 },
-  blob2:    { position: 'absolute', width: 220, height: 220, borderRadius: 110, backgroundColor: 'rgba(168,133,42,0.06)', top: 180,  right: -50 },
-  blob3:    { position: 'absolute', width: 200, height: 200, borderRadius: 100, backgroundColor: 'rgba(0,113,227,0.05)',  bottom: 80, left: 30 },
+  blob1:    { position: 'absolute', width: 280, height: 280, borderRadius: 140, backgroundColor: 'rgba(124,61,143,0.09)',  top: -60,  left: -60 },
+  blob2:    { position: 'absolute', width: 220, height: 220, borderRadius: 110, backgroundColor: 'rgba(212,168,67,0.07)', top: 180,  right: -50 },
+  blob3:    { position: 'absolute', width: 200, height: 200, borderRadius: 100, backgroundColor: 'rgba(201,80,122,0.06)',  bottom: 80, left: 30 },
 
-  header:      { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 10 },
-  headerTitle: { fontSize: 26, fontWeight: '800', color: '#1C1C1E', letterSpacing: -0.5 },
+  header:      { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 6 },
+  headerTitle: { fontSize: 28, fontWeight: '800', color: '#1C1C1E', letterSpacing: -0.5 },
   headerSub:   { fontSize: 13, color: 'rgba(28,28,30,0.45)', marginTop: 1 },
+
+  feedTabs: { flexDirection: 'row', paddingHorizontal: 16, gap: 8, marginBottom: 10 },
+  feedTab: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.7)', borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.88)' },
+  feedTabActive: { backgroundColor: '#7C3D8F', borderColor: '#7C3D8F' },
+  feedTabTxt: { fontSize: 13, fontWeight: '600', color: '#2D2D2D' },
+  feedTabTxtActive: { color: '#fff' },
 
   listContent: { paddingHorizontal: 16, paddingBottom: 120, paddingTop: 4 },
 

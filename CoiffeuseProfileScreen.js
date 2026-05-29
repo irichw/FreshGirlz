@@ -444,17 +444,50 @@ async function loadSalonStatus() {
 </View>
 </View>
 
+        {/* STATS */}
+        <BlurView intensity={55} tint="light" style={styles.statsRow}>
+          <View style={styles.statItem}>
+            <Text style={styles.statVal}>{barberData.reservations_count > 0 ? barberData.reservations_count : (barberData.nb_avis || 0)}</Text>
+            <Text style={styles.statLabel}>Réservations</Text>
+          </View>
+          <View style={styles.statSep} />
+          <View style={styles.statItem}>
+            <Text style={styles.statVal}>★ {barberData.rating?.toFixed(1) || '—'}</Text>
+            <Text style={styles.statLabel}>{barberData.nb_avis > 0 ? `${barberData.nb_avis} avis` : 'Avis'}</Text>
+          </View>
+          <View style={styles.statSep} />
+          <View style={styles.statItem}>
+            <Text style={styles.statVal}>{barberData.loyalty_rate > 0 ? `${Math.round(barberData.loyalty_rate)}%` : '—'}</Text>
+            <Text style={styles.statLabel}>Fidèles</Text>
+          </View>
+        </BlurView>
+
+        {/* SPÉCIALITÉS TAGS */}
+        {barberData.specialites?.length > 0 && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.specialitesContent}>
+            {barberData.specialites.map(sp => {
+              const found = require('./colors').SPECIALITES.find(s => s.id === sp);
+              return found ? (
+                <View key={sp} style={[styles.specPill, { backgroundColor: found.color + '18', borderColor: found.color + '40' }]}>
+                  <Text style={[styles.specPillTxt, { color: found.color }]}>{found.label}</Text>
+                </View>
+              ) : null;
+            })}
+          </ScrollView>
+        )}
+
         {/* CTA — Prendre rendez-vous */}
         <TouchableOpacity
           style={styles.reserveBtn}
           onPress={() => navigation.navigate('BookAppointment', { barberId: barberData.id })}
           activeOpacity={0.8}>
-          <Text style={styles.reserveBtnText}>📅 Prendre rendez-vous</Text>
+          <Text style={styles.reserveBtnText}>Réserver</Text>
         </TouchableOpacity>
 
         {/* TABS */}
         <BlurView intensity={40} tint="light" style={styles.tabs}>
-          {['Book','Prestations','Avis'].map((t) => (
+          {['Portfolio','Prestations','Avis','Infos'].map((t) => (
             <TouchableOpacity key={t} style={styles.tab}
               onPress={() => setActiveTab(t)}>
               <Text style={[styles.tabText, activeTab===t && styles.tabActive]}>{t}</Text>
@@ -463,8 +496,8 @@ async function loadSalonStatus() {
           ))}
         </BlurView>
 
-        {/* ── ONGLET BOOK ── */}
-        {activeTab === 'Book' && (
+        {/* ── ONGLET PORTFOLIO ── */}
+        {activeTab === 'Portfolio' && (
           <View>
             <View style={styles.secRow}>
               <Text style={styles.secTitle}>📸 Coupes récentes</Text>
@@ -577,6 +610,40 @@ async function loadSalonStatus() {
           </View>
         )}
 
+
+        {/* ── ONGLET INFOS ── */}
+        {activeTab === 'Infos' && (
+          <View style={{ paddingHorizontal: 16, gap: 10, paddingTop: 8 }}>
+            {barberData.bio && (
+              <BlurView intensity={55} tint="light" style={styles.infoCard}>
+                <Text style={styles.infoCardTitle}>À propos</Text>
+                <Text style={styles.infoCardBody}>{barberData.bio}</Text>
+              </BlurView>
+            )}
+            {barberData.instagram && (
+              <BlurView intensity={55} tint="light" style={styles.infoCard}>
+                <Text style={styles.infoCardTitle}>Instagram</Text>
+                <Text style={[styles.infoCardBody, { color: '#7C3D8F' }]}>@{barberData.instagram}</Text>
+              </BlurView>
+            )}
+            {(barberData.ville || barberData.adresse) && (
+              <BlurView intensity={55} tint="light" style={styles.infoCard}>
+                <Text style={styles.infoCardTitle}>Localisation</Text>
+                <Text style={styles.infoCardBody}>
+                  📍 {[barberData.adresse, barberData.ville].filter(Boolean).join(', ')}
+                </Text>
+              </BlurView>
+            )}
+            {barberData.work_mode && (
+              <BlurView intensity={55} tint="light" style={styles.infoCard}>
+                <Text style={styles.infoCardTitle}>Mode de travail</Text>
+                <Text style={styles.infoCardBody}>
+                  {barberData.work_mode === 'domicile' ? '🏠 À domicile' : '✂️ En salon'}
+                </Text>
+              </BlurView>
+            )}
+          </View>
+        )}
 
         {/* ── ONGLET AVIS ── */}
         {activeTab === 'Avis' && (
@@ -691,6 +758,23 @@ salonArrow: { fontSize:20, color:'rgba(28,28,30,0.3)' },
 heroTags: { flexDirection:'row', gap:6, marginTop:10, flexWrap:'wrap', paddingHorizontal:16 },
 heroTag: { backgroundColor:'rgba(168,133,42,0.12)', borderRadius:20, paddingHorizontal:9, paddingVertical:4, borderWidth:0.5, borderColor:'rgba(168,133,42,0.28)' },
 heroTagText: { fontSize:12, color:'#A8852A', fontWeight:'600' },
+
+  // Stats
+  statsRow: { marginHorizontal:16, marginTop:10, borderRadius:16, overflow:'hidden', flexDirection:'row', padding:14, borderWidth:0.5, borderColor:'rgba(255,255,255,0.85)', justifyContent:'space-around' },
+  statItem: { alignItems:'center', flex:1 },
+  statVal: { fontSize:18, fontWeight:'800', color:'#7C3D8F' },
+  statLabel: { fontSize:10, color:'rgba(28,28,30,0.5)', marginTop:2 },
+  statSep: { width:1, backgroundColor:'rgba(28,28,30,0.1)', alignSelf:'stretch', marginVertical:4 },
+
+  // Spécialités pills
+  specialitesContent: { paddingHorizontal:16, gap:8, paddingTop:10, paddingBottom:4 },
+  specPill: { borderRadius:20, paddingHorizontal:12, paddingVertical:5, borderWidth:1 },
+  specPillTxt: { fontSize:12, fontWeight:'600' },
+
+  // Infos tab
+  infoCard: { borderRadius:14, overflow:'hidden', padding:14, borderWidth:0.5, borderColor:'rgba(255,255,255,0.85)' },
+  infoCardTitle: { fontSize:11, fontWeight:'700', color:'rgba(28,28,30,0.45)', textTransform:'uppercase', letterSpacing:0.5, marginBottom:6 },
+  infoCardBody: { fontSize:14, color:'#1C1C1E', lineHeight:20 },
 
   // CTA RDV
   reserveBtn: { marginHorizontal:16, marginVertical:12, backgroundColor:'#7C3D8F', borderRadius:16, paddingVertical:15, alignItems:'center', shadowColor:'#7C3D8F', shadowOffset:{width:0,height:4}, shadowOpacity:0.35, shadowRadius:10, elevation:4 },

@@ -37,6 +37,8 @@ export default function HomeScreen({ navigation }) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [categoryPhotos, setCategoryPhotos] = useState({});
   const [inspirationPhoto, setInspirationPhoto] = useState(null);
+  const [referenceCoupe, setReferenceCoupe] = useState(null);
+  const [trendingCoupes, setTrendingCoupes] = useState([]);
 
   const SIM_MODES = [null, 'active', 'in_progress'];
   const SIM_LABELS = {
@@ -81,6 +83,8 @@ export default function HomeScreen({ navigation }) {
     fetchCategoryPhotos();
     fetchInspirationPhoto();
     fetchUserLocation();
+    fetchReferenceCoupe();
+    fetchTrendingCoupes();
   }, []);
 
   useEffect(() => {
@@ -178,6 +182,22 @@ export default function HomeScreen({ navigation }) {
       if (p.categorie && !map[p.categorie]) map[p.categorie] = p.photo_url;
     });
     setCategoryPhotos(map);
+  }
+
+  async function fetchReferenceCoupe() {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+    const { data } = await supabase
+      .from('clientes')
+      .select('reference_coupe_id, coupes:reference_coupe_id(id, photo_url, service, name, created_at)')
+      .eq('user_id', session.user.id)
+      .maybeSingle();
+    if (data?.coupes) setReferenceCoupe(data.coupes);
+  }
+
+  async function fetchTrendingCoupes() {
+    const { data } = await supabase.rpc('get_trending_coupes', { limit_count: 10 });
+    if (data) setTrendingCoupes(data);
   }
 
   async function fetchInspirationPhoto() {
@@ -294,19 +314,51 @@ export default function HomeScreen({ navigation }) {
           ))}
         </ScrollView>
 
-        {/* ── SIMULATION FILE (dev) ── */}
-        <TouchableOpacity
-          style={s.simBtn}
-          onPress={() => setSimMode(prev => {
-            const idx = SIM_MODES.indexOf(prev);
-            return SIM_MODES[(idx + 1) % SIM_MODES.length];
-          })}
-          activeOpacity={0.75}>
-          <Text style={s.simBtnTxt}>{SIM_LABELS[simMode]}</Text>
-        </TouchableOpacity>
+        {/* ── COUPE DE RÉFÉRENCE ── */}
+        {referenceCoupe ? (
+          <BlurView intensity={55} tint="light" style={s.refCard}>
+            <View style={s.refPhotoWrap}>
+              {referenceCoupe.photo_url
+                ? <Image source={{ uri: referenceCoupe.photo_url }} style={s.refPhoto} resizeMode="cover" />
+                : <View style={[s.refPhoto, s.refPhotoFallback]}><Text style={{ fontSize: 28 }}>✂️</Text></View>
+              }
+            </View>
+            <View style={s.refInfo}>
+              <Text style={s.refLabel}>Ma coupe de référence</Text>
+              <Text style={s.refName} numberOfLines={1}>
+                {referenceCoupe.name || referenceCoupe.service || 'Coupe enregistrée'}
+              </Text>
+              <Text style={s.refDate}>
+                Modifiée le {new Date(referenceCoupe.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}
+              </Text>
+              <View style={s.refActions}>
+                <TouchableOpacity style={s.refActionBtn}
+                  onPress={() => navigation.navigate('Explorer', { refCoupeId: referenceCoupe.id })}>
+                  <Text style={s.refActionTxt}>Trouver une coiffeuse</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[s.refActionBtn, s.refActionBtnSecondary]}
+                  onPress={() => navigation.navigate('Profile', { openRefCoupe: true })}>
+                  <Text style={[s.refActionTxt, s.refActionTxtSecondary]}>Modifier</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </BlurView>
+        ) : session ? (
+          <TouchableOpacity style={s.refCardEmpty}
+            onPress={() => navigation.navigate('Profile', { openRefCoupe: true })}>
+            <BlurView intensity={55} tint="light" style={s.refCardEmptyInner}>
+              <Text style={s.refEmptyIcon}>✂️</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={s.refEmptyTitle}>Ajouter ma coupe de référence</Text>
+                <Text style={s.refEmptyDesc}>Pour que les coiffeuses comprennent ton style</Text>
+              </View>
+              <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 18 }}>+</Text>
+            </BlurView>
+          </TouchableOpacity>
+        ) : null}
 
         {/* ── FILE ACTIVE ── */}
-        <QueueCard key={queueKey} mockEntry={simMode ? MOCK_ENTRIES[simMode] : undefined} />
+        <QueueCard key={queueKey} mockEntry={undefined} />
 
         {/* ── CARTE MAP ── */}
         <TouchableOpacity style={s.mapCard} activeOpacity={0.9} onPress={() => navigation.navigate('Map')}>
@@ -433,13 +485,21 @@ export default function HomeScreen({ navigation }) {
 
         {/* ── COIFFEUSES POPULAIRES ── */}
         <View style={s.secRow}>
-          <Text style={s.secTitle}>Coiffeuses populaires</Text>
+          <Text style={s.secTitle}>Coiffeuses proches de toi</Text>
           <Text style={s.secLink} onPress={() => navigation.navigate('TopBarbers')}>Voir tout</Text>
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}
           contentContainerStyle={s.popContent}>
-          {popularCoiffeuses.map(c => {
-            const dist = getCoiffeuseDistance(c);
+          {[...popularCoiffeuses]
+            .map(c => ({ ...c, _dist: getCoiffeuseDistance(c) }))
+            .sort((a, b) => {
+              if (a._dist !== null && b._dist !== null) return a._dist - b._dist;
+              if (a._dist !== null) return -1;
+              if (b._dist !== null) return 1;
+              return (b.rating || 0) - (a.rating || 0);
+            })
+            .map(c => {
+            const dist = c._dist !== undefined ? c._dist : getCoiffeuseDistance(c);
             const mainSpec = c.specialites?.length > 0
               ? SPECIALITES.find(sp => c.specialites.includes(sp.id))
               : null;
@@ -487,6 +547,43 @@ export default function HomeScreen({ navigation }) {
           })}
         </ScrollView>
 
+        {/* ── TENDANCES DE LA SEMAINE ── */}
+        {trendingCoupes.length > 0 && (
+          <>
+            <View style={s.secRow}>
+              <Text style={s.secTitle}>Tendances 🔥</Text>
+              <Text style={s.secLink} onPress={() => navigation.navigate('Explorer', { tab: 'inspirations' })}>Voir tout</Text>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}
+              contentContainerStyle={s.trendContent}>
+              {trendingCoupes.map((coupe, i) => (
+                <TouchableOpacity key={coupe.id} style={s.trendCard} activeOpacity={0.88}
+                  onPress={() => navigation.navigate('BarberProfile', { barber: { id: coupe.barber_id } })}>
+                  <View style={s.trendPhotoWrap}>
+                    {coupe.photo_url
+                      ? <Image source={{ uri: coupe.photo_url }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                      : <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.primaryLight }]} />
+                    }
+                    <View style={s.trendOverlay} />
+                    <View style={s.trendRankBadge}>
+                      <Text style={s.trendRankTxt}>{i + 1}</Text>
+                    </View>
+                    {coupe.likes > 0 && (
+                      <View style={s.trendLikeBadge}>
+                        <Text style={s.trendLikeTxt}>♥ {coupe.likes}</Text>
+                      </View>
+                    )}
+                  </View>
+                  {coupe.coiffeuse_name && (
+                    <Text style={s.trendCoiffName} numberOfLines={1}>{coupe.coiffeuse_name}</Text>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </>
+        )}
+
+        <View style={{ height: 110 }} />
       </ScrollView>
     </SafeAreaView>
   );
@@ -713,4 +810,68 @@ const s = StyleSheet.create({
   popRating: { fontSize: 12, fontWeight: '700', color: colors.secondary },
   popAvis: { fontSize: 11, color: colors.textMuted },
   popDist: { fontSize: 11, color: colors.textMuted, marginTop: 3 },
+
+  // ── Coupe de référence ──
+  refCard: {
+    marginHorizontal: 16, marginTop: 8, borderRadius: 18, overflow: 'hidden',
+    flexDirection: 'row', alignItems: 'center', padding: 12,
+    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.85)',
+    gap: 12,
+  },
+  refPhotoWrap: {
+    width: 72, height: 72, borderRadius: 14, overflow: 'hidden',
+    borderWidth: 2, borderColor: colors.primary,
+  },
+  refPhoto: { width: '100%', height: '100%' },
+  refPhotoFallback: {
+    backgroundColor: colors.primaryLight,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  refInfo: { flex: 1, gap: 3 },
+  refLabel: { fontSize: 10, fontWeight: '600', color: colors.primary, textTransform: 'uppercase', letterSpacing: 0.4 },
+  refName: { fontSize: 15, fontWeight: '800', color: colors.dark },
+  refDate: { fontSize: 11, color: colors.textMuted },
+  refActions: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  refActionBtn: {
+    borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5,
+    backgroundColor: colors.primary,
+  },
+  refActionBtnSecondary: {
+    backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.primary,
+  },
+  refActionTxt: { fontSize: 11, fontWeight: '700', color: '#fff' },
+  refActionTxtSecondary: { color: colors.primary },
+  refCardEmpty: { marginHorizontal: 16, marginTop: 8, borderRadius: 18, overflow: 'hidden' },
+  refCardEmptyInner: {
+    flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12,
+    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.85)',
+  },
+  refEmptyIcon: { fontSize: 28 },
+  refEmptyTitle: { fontSize: 14, fontWeight: '700', color: colors.dark },
+  refEmptyDesc: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
+
+  // ── Tendances ──
+  trendContent: { paddingHorizontal: 16, gap: 10, paddingBottom: 4 },
+  trendCard: { width: 130, borderRadius: 16, overflow: 'hidden', backgroundColor: colors.primaryLight },
+  trendPhotoWrap: { width: 130, height: 160, position: 'relative' },
+  trendOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(28,0,40,0.3)',
+  },
+  trendRankBadge: {
+    position: 'absolute', top: 8, left: 8,
+    width: 24, height: 24, borderRadius: 8,
+    backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
+  },
+  trendRankTxt: { fontSize: 11, fontWeight: '800', color: '#fff' },
+  trendLikeBadge: {
+    position: 'absolute', bottom: 8, right: 8,
+    backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 20,
+    paddingHorizontal: 7, paddingVertical: 3,
+  },
+  trendLikeTxt: { fontSize: 10, color: '#fff', fontWeight: '600' },
+  trendCoiffName: {
+    fontSize: 11, fontWeight: '600', color: colors.dark,
+    paddingHorizontal: 8, paddingVertical: 6,
+  },
 });

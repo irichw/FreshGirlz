@@ -131,14 +131,20 @@ export default function BookAppointmentScreen({ navigation, route }) {
       setCatalogue(svcs || []);
     }
 
-    // Côté cliente : auto-remplir nom + charger clientId
+    // Côté cliente : auto-remplir nom + charger clientId + coupe de référence
     if (!isBarber) {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         const { data: client } = await supabase
-          .from('clientes').select('id, name').eq('user_id', user.id).maybeSingle();
+          .from('clientes')
+          .select('id, name, reference_coupe_id, coupes:reference_coupe_id(id, photo_url)')
+          .eq('user_id', user.id).maybeSingle();
         if (client?.name) setClientName(client.name);
         if (client?.id)   setMyClientId(client.id);
+        if (client?.coupes?.photo_url && !referenceUri) {
+          setReferenceUri(client.coupes.photo_url);
+          setReferenceIsLocal(false);
+        }
       }
     }
   }
