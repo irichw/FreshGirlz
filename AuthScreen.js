@@ -12,7 +12,7 @@ export default function AuthScreen({ navigation, onGuestMode }) {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [role, setRole] = useState('client');
-  const [barberType, setBarberType] = useState('manager'); // 'manager' | 'barber'
+  const [barberType, setBarberType] = useState('independante'); // 'independante' | 'employee' | 'gerante'
   const [inviteCode, setInviteCode] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -27,7 +27,7 @@ export default function AuthScreen({ navigation, onGuestMode }) {
         Alert.alert('Erreur', 'Le prénom est requis');
         return;
       }
-      if (role === 'coiffeuse' && barberType === 'barber' && !inviteCode.trim()) {
+      if (role === 'coiffeuse' && barberType === 'employee' && !inviteCode.trim()) {
         Alert.alert('Erreur', "Le code d'invitation est requis");
         return;
       }
@@ -41,7 +41,7 @@ export default function AuthScreen({ navigation, onGuestMode }) {
       } else {
         // Valider le code d'invitation AVANT de créer le compte
         let inviteData = null;
-        if (role === 'coiffeuse' && barberType === 'barber') {
+        if (role === 'coiffeuse' && barberType === 'employee') {
           const { data: invite } = await supabase
             .from('salon_invites')
             .select('id, salon_id')
@@ -61,7 +61,7 @@ export default function AuthScreen({ navigation, onGuestMode }) {
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
-          options: { data: { name: name.trim(), role } },
+          options: { data: { name: name.trim(), role, barber_type: role === 'coiffeuse' ? barberType : null } },
         });
         if (error) throw error;
 
@@ -69,17 +69,24 @@ export default function AuthScreen({ navigation, onGuestMode }) {
         if (!userId) return; // confirmation email requise
 
         if (role === 'coiffeuse') {
-          if (barberType === 'manager') {
-            // Pas d'INSERT barbers ici — CreateSalonScreen crée le salon + le barber ensemble
-          } else {
-            // Créer le Coiffeuse normal, lié au salon de l'invitation
+          if (barberType === 'independante') {
             await supabase.from('coiffeuses').insert({
-              user_id: userId,
-              name: name.trim(),
-              salon_id: inviteData.salon_id,
-              role: 'coiffeuse',
+              user_id:      userId,
+              name:         name.trim(),
+              profile_type: 'independante',
+              role:         'coiffeuse',
             });
-            // Marquer l'invitation comme utilisée
+          } else if (barberType === 'gerante') {
+            // Pas d'INSERT ici — CreateSalonScreen crée le salon + la coiffeuse
+          } else {
+            // employee — lié au salon via invitation
+            await supabase.from('coiffeuses').insert({
+              user_id:      userId,
+              name:         name.trim(),
+              salon_id:     inviteData.salon_id,
+              role:         'coiffeuse',
+              profile_type: 'employee',
+            });
             await supabase
               .from('salon_invites')
               .update({ is_used: true })
@@ -212,34 +219,50 @@ export default function AuthScreen({ navigation, onGuestMode }) {
           {/* SOUS-TYPE Coiffeuse */}
           {isBarberSignup && (
             <View style={styles.inputWrap}>
-              <Text style={styles.inputLabel}>Ton rôle dans le salon</Text>
-              <View style={styles.barberTypeRow}>
+              <Text style={styles.inputLabel}>Ton profil</Text>
+              <View style={styles.barberTypeCol}>
                 <TouchableOpacity
-                  style={[styles.barberTypeBtn, barberType === 'manager' && styles.barberTypeBtnActive]}
-                  onPress={() => setBarberType('manager')}
+                  style={[styles.barberTypeBtn, barberType === 'independante' && styles.barberTypeBtnActive]}
+                  onPress={() => setBarberType('independante')}
                   activeOpacity={0.8}>
-                  <Text style={styles.barberTypeIcon}>🏪</Text>
-                  <Text style={[styles.barberTypeTitle, barberType === 'manager' && styles.barberTypeTitleActive]}>
-                    Gérant
-                  </Text>
-                  <Text style={styles.barberTypeSub}>Créer mon salon</Text>
+                  <Text style={styles.barberTypeIcon}>💅</Text>
+                  <View style={styles.barberTypeTxtWrap}>
+                    <Text style={[styles.barberTypeTitle, barberType === 'independante' && styles.barberTypeTitleActive]}>
+                      Indépendante
+                    </Text>
+                    <Text style={styles.barberTypeSub}>À domicile, chez toi ou en déplacement</Text>
+                  </View>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.barberTypeBtn, barberType === 'barber' && styles.barberTypeBtnActive]}
-                  onPress={() => setBarberType('barber')}
+                  style={[styles.barberTypeBtn, barberType === 'employee' && styles.barberTypeBtnActive]}
+                  onPress={() => setBarberType('employee')}
                   activeOpacity={0.8}>
                   <Text style={styles.barberTypeIcon}>✂️</Text>
-                  <Text style={[styles.barberTypeTitle, barberType === 'barber' && styles.barberTypeTitleActive]}>
-                    Coiffeuse
-                  </Text>
-                  <Text style={styles.barberTypeSub}>Rejoindre un salon</Text>
+                  <View style={styles.barberTypeTxtWrap}>
+                    <Text style={[styles.barberTypeTitle, barberType === 'employee' && styles.barberTypeTitleActive]}>
+                      En salon
+                    </Text>
+                    <Text style={styles.barberTypeSub}>Employée ou freelance dans un salon</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.barberTypeBtn, barberType === 'gerante' && styles.barberTypeBtnActive]}
+                  onPress={() => setBarberType('gerante')}
+                  activeOpacity={0.8}>
+                  <Text style={styles.barberTypeIcon}>🏪</Text>
+                  <View style={styles.barberTypeTxtWrap}>
+                    <Text style={[styles.barberTypeTitle, barberType === 'gerante' && styles.barberTypeTitleActive]}>
+                      Gérante de salon
+                    </Text>
+                    <Text style={styles.barberTypeSub}>Créer et gérer mon salon</Text>
+                  </View>
                 </TouchableOpacity>
               </View>
             </View>
           )}
 
-          {/* CODE D'INVITATION — Coiffeuse rejoignant */}
-          {isBarberSignup && barberType === 'barber' && (
+          {/* CODE D'INVITATION — Coiffeuse en salon */}
+          {isBarberSignup && barberType === 'employee' && (
             <View style={styles.inputWrap}>
               <Text style={styles.inputLabel}>Code d'invitation</Text>
               <TextInput
@@ -324,13 +347,14 @@ const styles = StyleSheet.create({
   roleBtnTextActive: { color: '#7C3D8F' },
 
   // SOUS-TYPE Coiffeuse
-  barberTypeRow: { flexDirection: 'row', gap: 8 },
-  barberTypeBtn: { flex: 1, alignItems: 'center', padding: 14, borderRadius: 14, backgroundColor: 'rgba(28,28,30,0.04)', borderWidth: 0.5, borderColor: 'rgba(28,28,30,0.1)', gap: 3 },
+  barberTypeCol: { gap: 8 },
+  barberTypeBtn: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 14, backgroundColor: 'rgba(28,28,30,0.04)', borderWidth: 0.5, borderColor: 'rgba(28,28,30,0.1)', gap: 12 },
   barberTypeBtnActive: { backgroundColor: 'rgba(124,61,143,0.1)', borderColor: 'rgba(124,61,143,0.35)' },
-  barberTypeIcon: { fontSize: 22, marginBottom: 2 },
+  barberTypeIcon: { fontSize: 24 },
+  barberTypeTxtWrap: { flex: 1 },
   barberTypeTitle: { fontSize: 14, fontWeight: '700', color: 'rgba(28,28,30,0.5)' },
   barberTypeTitleActive: { color: '#7C3D8F' },
-  barberTypeSub: { fontSize: 10, color: 'rgba(28,28,30,0.4)', textAlign: 'center' },
+  barberTypeSub: { fontSize: 11, color: 'rgba(28,28,30,0.4)', marginTop: 2 },
 
   submitBtn: { backgroundColor: 'rgba(28,28,30,0.88)', borderRadius: 14, padding: 15, alignItems: 'center', marginTop: 6 },
   submitBtnLoading: { opacity: 0.6 },

@@ -46,6 +46,8 @@ export default function CoiffeuseSalonScreen({ navigation }) {
   const [uploading, setUploading] = useState(false);
   const [salonPhotos, setSalonPhotos] = useState([]);
   const [heroIndex, setHeroIndex] = useState(0);
+  const [isIndependante, setIsIndependante] = useState(false);
+  const [indepServices, setIndepServices] = useState([]);
 
   const isFirstMount = useRef(true);
 
@@ -72,6 +74,22 @@ export default function CoiffeuseSalonScreen({ navigation }) {
       if (!barberData) return;
 
       setCurrentBarber(barberData);
+
+      // Profil indépendante — pas de salon, données personnelles uniquement
+      if (barberData.profile_type === 'independante') {
+        setIsIndependante(true);
+        const [svcRes, bookRes, prestRes] = await Promise.all([
+          supabase.from('services').select('*').eq('coiffeuse_id', barberData.id).eq('is_active', true).order('name'),
+          supabase.from('book_photos').select('id, photo_url, is_private, created_at').eq('coiffeuse_id', barberData.id).order('created_at', { ascending: false }),
+          supabase.from('prestations').select('id, nom, categorie, emoji, prix_min, prix_max, duree_min, description').eq('coiffeuse_id', barberData.id).order('categorie'),
+        ]);
+        if (svcRes.data) setIndepServices(svcRes.data);
+        if (bookRes.data) setBookPhotos(bookRes.data);
+        if (prestRes.data) setPrestations(prestRes.data);
+        setLoading(false);
+        return;
+      }
+
       const salonId = barberData.salon_id;
 
       const [salonRes, barbersRes, servicesRes, catsRes, hoursRes, coupesRes, cutsRes, photosRes, bookPhotosRes, prestRes] = await Promise.all([
@@ -366,14 +384,28 @@ export default function CoiffeuseSalonScreen({ navigation }) {
         <View style={styles.blob3} />
       </View>
 
-      {!salon && !loading && (
+      {isIndependante && !loading && (
+        <IndependanteProfileView
+          barber={currentBarber}
+          services={indepServices}
+          prestations={prestations}
+          bookPhotos={bookPhotos}
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          onAddBookPhoto={showPhotoOptions}
+          onDeleteBookPhoto={confirmDeleteBookPhoto}
+          uploading={uploading}
+          navigation={navigation}
+        />
+      )}
+      {!isIndependante && !salon && !loading && (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 }}>
           <Text style={{ fontSize: 32 }}>🏪</Text>
           <Text style={{ fontSize: 16, fontWeight: '700', color: '#1C1C1E', textAlign: 'center' }}>
             Salon introuvable
           </Text>
           <Text style={{ fontSize: 13, color: 'rgba(28,28,30,0.5)', textAlign: 'center', lineHeight: 20 }}>
-            Ton profil Coiffeuse n'est pas encore lié à un salon.{'\n'}Déconnecte-toi et recrée ton compte — assure-toi que les accès Supabase sont bien configurés.
+            Ton profil n'est pas encore lié à un salon.
           </Text>
           <TouchableOpacity
             style={{ backgroundColor: 'rgba(192,57,43,0.1)', borderRadius: 12, padding: 12, marginTop: 8 }}
@@ -1231,4 +1263,179 @@ const styles = StyleSheet.create({
   tabLabel:       { fontSize: 10, fontWeight: '500', color: 'rgba(28,28,30,0.4)' },
   tabLabelActive: { color: '#1C1C1E', fontWeight: '700' },
   tabAvatar:      { width: 24, height: 24, borderRadius: 12 },
+});
+
+// ─── Vue profil indépendante ──────────────────────────────────────────────────
+
+const INDEP_TABS = ['Infos', 'Prestations', 'Book'];
+
+function IndependanteProfileView({ barber, services, prestations, bookPhotos, activeTab, setActiveTab, onAddBookPhoto, onDeleteBookPhoto, uploading, navigation }) {
+  const specInfos = SPECIALITES.filter(sp => (barber?.specialites || []).includes(sp.id));
+  const workModeLabels = { recoit: '🏠 Reçoit chez elle', domicile: '🚗 Se déplace chez toi', deplace: '📍 Se déplace partout' };
+
+  function fmtSvcPrice(svc) {
+    if (!svc.price_min && svc.price_min !== 0) return 'Sur devis';
+    if (svc.price_type === 'range' && svc.price_max) return `${svc.price_min} – ${svc.price_max} €`;
+    if (svc.price_type === 'from') return `À partir de ${svc.price_min} €`;
+    if (svc.price_min === 0) return 'Gratuit';
+    return `${svc.price_min} €`;
+  }
+
+  function fmtDur(min) {
+    if (!min) return '';
+    const h = Math.floor(min / 60), m = min % 60;
+    if (h === 0) return `${m} min`;
+    if (m === 0) return `${h}h`;
+    return `${h}h${String(m).padStart(2, '0')}`;
+  }
+
+  return (
+    <ScrollView contentContainerStyle={{ paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
+      {/* Header profil */}
+      <View style={ip.header}>
+        <View style={ip.avatarWrap}>
+          {barber?.avatar_url
+            ? <Image source={{ uri: barber.avatar_url }} style={ip.avatar} />
+            : <View style={ip.avatarPlaceholder}><Text style={{ fontSize: 36 }}>💅</Text></View>}
+        </View>
+        <Text style={ip.name}>{barber?.nom_pro || barber?.name}</Text>
+        {barber?.ville ? <Text style={ip.ville}>📍 {barber.ville}{barber?.intervention_zone ? `  ·  ${barber.intervention_zone}` : ''}</Text> : null}
+        <View style={ip.statsRow}>
+          <View style={ip.stat}><Text style={ip.statVal}>{services.length + prestations.length}</Text><Text style={ip.statLabel}>Prestations</Text></View>
+          <View style={ip.statDiv} />
+          <View style={ip.stat}><Text style={ip.statVal}>{bookPhotos.length}</Text><Text style={ip.statLabel}>Photos</Text></View>
+          <View style={ip.statDiv} />
+          <View style={ip.stat}><Text style={ip.statVal}>{barber?.rating ? barber.rating.toFixed(1) : '—'}</Text><Text style={ip.statLabel}>Note</Text></View>
+        </View>
+      </View>
+
+      {/* Onglets */}
+      <View style={ip.tabs}>
+        {INDEP_TABS.map(t => (
+          <TouchableOpacity key={t} style={[ip.tab, activeTab === t && ip.tabActive]} onPress={() => setActiveTab(t)}>
+            <Text style={[ip.tabTxt, activeTab === t && ip.tabTxtActive]}>{t}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* Onglet Infos */}
+      {activeTab === 'Infos' && (
+        <View style={ip.section}>
+          {specInfos.length > 0 && (
+            <BlurView intensity={55} tint="light" style={ip.card}>
+              <Text style={ip.cardTitle}>Spécialités</Text>
+              <View style={ip.chips}>
+                {specInfos.map(sp => (
+                  <View key={sp.id} style={[ip.chip, { borderColor: sp.color, backgroundColor: sp.color + '18' }]}>
+                    <Text style={ip.chipEmoji}>{sp.emoji}</Text>
+                    <Text style={[ip.chipTxt, { color: sp.color }]}>{sp.label}</Text>
+                  </View>
+                ))}
+              </View>
+            </BlurView>
+          )}
+          {(barber?.work_modes || []).length > 0 && (
+            <BlurView intensity={55} tint="light" style={ip.card}>
+              <Text style={ip.cardTitle}>Modes de travail</Text>
+              <View style={{ gap: 8 }}>
+                {(barber.work_modes || []).map(m => (
+                  <Text key={m} style={ip.modeTxt}>{workModeLabels[m] || m}</Text>
+                ))}
+              </View>
+            </BlurView>
+          )}
+          {barber?.instagram && (
+            <BlurView intensity={55} tint="light" style={ip.card}>
+              <Text style={ip.cardTitle}>Instagram</Text>
+              <Text style={ip.modeTxt}>@{barber.instagram}</Text>
+            </BlurView>
+          )}
+        </View>
+      )}
+
+      {/* Onglet Prestations */}
+      {activeTab === 'Prestations' && (
+        <View style={ip.section}>
+          {(services.length === 0 && prestations.length === 0) && (
+            <View style={ip.emptyWrap}>
+              <Text style={ip.emptyIcon}>✂️</Text>
+              <Text style={ip.emptyTxt}>Aucune prestation pour l'instant</Text>
+            </View>
+          )}
+          {services.map(svc => (
+            <BlurView key={svc.id} intensity={45} tint="light" style={ip.svcCard}>
+              <View style={{ flex: 1 }}>
+                <Text style={ip.svcName}>{svc.name}</Text>
+                {svc.description ? <Text style={ip.svcDesc}>{svc.description}</Text> : null}
+              </View>
+              <View style={{ alignItems: 'flex-end', gap: 3 }}>
+                <Text style={ip.svcPrice}>{fmtSvcPrice(svc)}</Text>
+                {svc.duration_minutes ? <Text style={ip.svcDur}>{fmtDur(svc.duration_minutes)}</Text> : null}
+              </View>
+            </BlurView>
+          ))}
+        </View>
+      )}
+
+      {/* Onglet Book */}
+      {activeTab === 'Book' && (
+        <View style={ip.section}>
+          <View style={ip.bookGrid}>
+            {bookPhotos.map((photo, i) => (
+              <TouchableOpacity key={photo.id} style={ip.bookItem} onLongPress={() => onDeleteBookPhoto(photo)}>
+                <Image source={{ uri: photo.photo_url }} style={ip.bookImg} resizeMode="cover" />
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={ip.bookAdd} onPress={onAddBookPhoto} disabled={uploading}>
+              {uploading ? <ActivityIndicator color="#7C3D8F" /> : <><Text style={ip.bookAddIcon}>+</Text><Text style={ip.bookAddTxt}>Ajouter</Text></>}
+            </TouchableOpacity>
+          </View>
+          {bookPhotos.length === 0 && (
+            <Text style={ip.emptyTxt}>Appuie sur + pour ajouter tes premières photos</Text>
+          )}
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
+const ip = StyleSheet.create({
+  header: { alignItems: 'center', paddingTop: 24, paddingBottom: 20, paddingHorizontal: 20 },
+  avatarWrap: { width: 96, height: 96, borderRadius: 48, borderWidth: 3, borderColor: '#7C3D8F', padding: 2, marginBottom: 12 },
+  avatar: { width: '100%', height: '100%', borderRadius: 44 },
+  avatarPlaceholder: { width: '100%', height: '100%', borderRadius: 44, backgroundColor: 'rgba(124,61,143,0.1)', alignItems: 'center', justifyContent: 'center' },
+  name: { fontSize: 22, fontWeight: '800', color: '#1C1C1E', marginBottom: 4 },
+  ville: { fontSize: 13, color: 'rgba(28,28,30,0.5)', marginBottom: 16 },
+  statsRow: { flexDirection: 'row', alignItems: 'center', gap: 0 },
+  stat: { flex: 1, alignItems: 'center', gap: 2 },
+  statVal: { fontSize: 18, fontWeight: '800', color: '#1C1C1E' },
+  statLabel: { fontSize: 10, color: 'rgba(28,28,30,0.45)', fontWeight: '500', textTransform: 'uppercase', letterSpacing: 0.4 },
+  statDiv: { width: 1, height: 28, backgroundColor: 'rgba(28,28,30,0.12)' },
+  tabs: { flexDirection: 'row', marginHorizontal: 16, marginBottom: 4, backgroundColor: 'rgba(28,28,30,0.06)', borderRadius: 14, padding: 3 },
+  tab: { flex: 1, paddingVertical: 8, borderRadius: 11, alignItems: 'center' },
+  tabActive: { backgroundColor: '#fff', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 6, elevation: 2 },
+  tabTxt: { fontSize: 13, fontWeight: '600', color: 'rgba(28,28,30,0.4)' },
+  tabTxtActive: { color: '#1C1C1E', fontWeight: '700' },
+  section: { paddingHorizontal: 16, paddingTop: 12, gap: 10 },
+  card: { borderRadius: 16, overflow: 'hidden', padding: 16, borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.85)', gap: 10 },
+  cardTitle: { fontSize: 11, fontWeight: '700', color: 'rgba(28,28,30,0.45)', textTransform: 'uppercase', letterSpacing: 0.5 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 50, borderWidth: 1, gap: 5 },
+  chipEmoji: { fontSize: 14 },
+  chipTxt: { fontSize: 12, fontWeight: '700' },
+  modeTxt: { fontSize: 14, color: '#1C1C1E', fontWeight: '500' },
+  svcCard: { borderRadius: 14, overflow: 'hidden', flexDirection: 'row', alignItems: 'center', padding: 14, borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.85)', gap: 12 },
+  svcName: { fontSize: 15, fontWeight: '700', color: '#1C1C1E' },
+  svcDesc: { fontSize: 12, color: 'rgba(28,28,30,0.5)', marginTop: 2 },
+  svcPrice: { fontSize: 14, fontWeight: '800', color: '#7C3D8F' },
+  svcDur: { fontSize: 11, color: 'rgba(28,28,30,0.45)' },
+  bookGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  bookItem: { width: '31%', aspectRatio: 4 / 5, borderRadius: 12, overflow: 'hidden' },
+  bookImg: { width: '100%', height: '100%' },
+  bookAdd: { width: '31%', aspectRatio: 4 / 5, borderRadius: 12, borderWidth: 1.5, borderColor: 'rgba(124,61,143,0.4)', borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center', gap: 4 },
+  bookAddIcon: { fontSize: 22, color: '#7C3D8F', fontWeight: '700' },
+  bookAddTxt: { fontSize: 11, color: '#7C3D8F', fontWeight: '600' },
+  emptyWrap: { alignItems: 'center', paddingVertical: 40, gap: 10 },
+  emptyIcon: { fontSize: 36 },
+  emptyTxt: { fontSize: 14, color: 'rgba(28,28,30,0.4)', textAlign: 'center' },
 });

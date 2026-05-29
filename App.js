@@ -39,6 +39,7 @@ import BookAppointmentScreen from './BookAppointmentScreen';
 import ShopManagementScreen from './ShopManagementScreen';
 import PhotoConsentScreen from './PhotoConsentScreen';
 import CreateSalonScreen from './CreateSalonScreen';
+import OnboardingIndependanteScreen from './OnboardingIndependanteScreen';
 import NearbySalonsScreen from './NearbySalonsScreen';
 import CoiffeuseBookScreen from './CoiffeuseBookScreen';
 
@@ -178,15 +179,27 @@ export default function App() {
 const [role, setRole] = useState(null);
 const [loading, setLoading] = useState(true);
 const [isGuest, setIsGuest] = useState(false);
-const [needsSalonSetup, setNeedsSalonSetup] = useState(false);
+const [needsSalonSetup, setNeedsSalonSetup]   = useState(false);
+const [needsOnboarding, setNeedsOnboarding]   = useState(false);
 
-async function checkCoiffeuseSetup(userId) {
+async function checkCoiffeuseSetup(userId, user) {
   const { data } = await supabase
     .from('coiffeuses')
-    .select('salon_id, role')
+    .select('salon_id, role, profile_type, onboarding_done')
     .eq('user_id', userId)
     .maybeSingle();
-  setNeedsSalonSetup(!data?.salon_id);
+
+  // Si la row coiffeuses n'est pas encore créée (race condition signup),
+  // on se rabat sur user_metadata.barber_type stocké lors de l'inscription.
+  const profileType = data?.profile_type ?? user?.user_metadata?.barber_type;
+
+  if (profileType === 'independante') {
+    setNeedsSalonSetup(false);
+    setNeedsOnboarding(!data?.onboarding_done);
+  } else {
+    setNeedsOnboarding(false);
+    setNeedsSalonSetup(!data?.salon_id);
+  }
 }
 
 useEffect(() => {
@@ -196,7 +209,7 @@ useEffect(() => {
       const userRole = session.user.user_metadata?.role || 'client';
       setRole(userRole);
       if (userRole === 'client') registerForPushNotifications();
-      if (userRole === 'coiffeuse') checkCoiffeuseSetup(session.user.id);
+      if (userRole === 'coiffeuse') checkCoiffeuseSetup(session.user.id, session.user);
     }
     setLoading(false);
   });
@@ -207,10 +220,11 @@ useEffect(() => {
       const userRole = session.user.user_metadata?.role || 'client';
       setRole(userRole);
       if (userRole === 'client') registerForPushNotifications();
-      if (userRole === 'coiffeuse') checkCoiffeuseSetup(session.user.id);
+      if (userRole === 'coiffeuse') checkCoiffeuseSetup(session.user.id, session.user);
     } else {
       setRole(null);
       setNeedsSalonSetup(false);
+      setNeedsOnboarding(false);
     }
   });
 
@@ -242,6 +256,10 @@ if (loading) return null;
         {!session && !isGuest ? (
           <Stack.Screen name="Auth">
             {props => <AuthScreen {...props} onGuestMode={() => setIsGuest(true)} />}
+          </Stack.Screen>
+        ) : role === 'coiffeuse' && needsOnboarding ? (
+          <Stack.Screen name="OnboardingIndependante">
+            {() => <OnboardingIndependanteScreen onComplete={() => setNeedsOnboarding(false)} />}
           </Stack.Screen>
         ) : role === 'coiffeuse' && needsSalonSetup ? (
           <Stack.Screen name="CreateSalon">

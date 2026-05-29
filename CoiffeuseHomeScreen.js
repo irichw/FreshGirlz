@@ -540,16 +540,18 @@ const TAB_DEFS = [
 ];
 
 export function CoiffeuseTabBar({ active, navigation }) {
-  const [salonPhoto, setSalonPhoto] = useState(null);
+  const [salonPhoto, setSalonPhoto]       = useState(null);
+  const [isIndependante, setIsIndependante] = useState(false);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return;
       supabase.from('coiffeuses')
-        .select('salons(photo_url)')
+        .select('profile_type, salons(photo_url)')
         .eq('user_id', user.id)
         .maybeSingle()
         .then(({ data }) => {
+          if (data?.profile_type === 'independante') setIsIndependante(true);
           if (data?.salons?.photo_url) setSalonPhoto(data.salons.photo_url);
         });
     });
@@ -560,6 +562,9 @@ export function CoiffeuseTabBar({ active, navigation }) {
       <BlurView intensity={65} tint="light" style={s.tabBarInner}>
         {TAB_DEFS.map(tab => {
           const isActive = tab.key === active;
+          const isSalonTab = tab.key === 'BarberSalon';
+          const label = isSalonTab && isIndependante ? 'Profil' : tab.label;
+          const icon  = isSalonTab && isIndependante ? '💅' : tab.icon;
           return (
             <TouchableOpacity
               key={tab.label}
@@ -570,15 +575,15 @@ export function CoiffeuseTabBar({ active, navigation }) {
                 {isActive && <BlurView intensity={90} tint="light" style={s.tabPillBlur} />}
                 {tab.imgA ? (
                   <Image source={isActive ? tab.imgA : tab.imgI} style={s.tabImg} />
-                ) : salonPhoto ? (
+                ) : (isSalonTab && !isIndependante && salonPhoto) ? (
                   <Image
                     source={{ uri: salonPhoto }}
                     style={[s.tabSalonPhoto, isActive && s.tabSalonPhotoActive]}
                   />
                 ) : (
-                  <Text style={s.tabIcon}>{tab.icon}</Text>
+                  <Text style={s.tabIcon}>{icon}</Text>
                 )}
-                <Text style={[s.tabLabel, isActive && s.tabLabelActive]}>{tab.label}</Text>
+                <Text style={[s.tabLabel, isActive && s.tabLabelActive]}>{label}</Text>
               </View>
             </TouchableOpacity>
           );
